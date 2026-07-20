@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Plus, ChevronRight, Zap, Clock, Calendar, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
 
 type RunSummary = {
@@ -45,7 +44,6 @@ function pendingApprovals(templates: TemplateSummary[]) {
 
 export default function TemplatesClient({ templates: initial }: { templates: TemplateSummary[] }) {
   const [templates, setTemplates] = useState(initial);
-  const router = useRouter();
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this template and all its run history?")) return;

@@ -53,7 +53,7 @@ const MODE_OPTIONS: { value: TemplateSlideDraft["imageMode"]; label: string; ico
   },
 ];
 
-export function emptyTemplateSlideDraft(order: number): TemplateSlideDraft {
+export function emptyTemplateSlideDraft(_order?: number): TemplateSlideDraft {
   return {
     id: crypto.randomUUID(),
     imageMode: "ai-auto",

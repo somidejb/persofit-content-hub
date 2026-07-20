@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { TIKTOK_AUTH_URL } from "@/lib/tiktok";
 import { randomBytes } from "crypto";
@@ -10,7 +10,7 @@ const SCOPES = ["user.info.basic", "video.publish"].join(",");
  * Redirects the user to TikTok's OAuth authorization page.
  * Requires tiktokClientKey + tiktokRedirectUri to be set in Settings.
  */
-export async function GET(_req: NextRequest) {
+export async function GET() {
   const settings = await prisma.settings.findUnique({ where: { id: "singleton" } });
 
   if (!settings?.tiktokClientKey) {

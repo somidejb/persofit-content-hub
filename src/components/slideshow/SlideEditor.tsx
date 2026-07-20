@@ -131,7 +131,6 @@ export default function SlideEditor({
   }
 
   // Guard against slides created before pool fields existed
-  const poolPaths = slide.randomImagePool ?? [];
   const poolPreviews = slide.randomImagePreviewUrls ?? [];
 
   const finalPrompt = buildFinalPrompt({
