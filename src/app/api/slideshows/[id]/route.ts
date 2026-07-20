@@ -27,6 +27,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (typeof body.hashtags === "string") data.hashtags = body.hashtags;
   if (typeof body.status === "string") data.status = body.status;
   if ("tiktokAccountId" in body) data.tiktokAccountId = body.tiktokAccountId || null;
+  if ("tiktokMusicId" in body) data.tiktokMusicId = body.tiktokMusicId || null;
 
   const slideshow = await prisma.slideshow.update({
     where: { id: params.id },

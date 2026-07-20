@@ -83,6 +83,7 @@ export async function postSlideshowNow(slideshowId: string) {
       images,
       caption: slideshow.caption,
       hashtags: slideshow.hashtags,
+      musicId: slideshow.tiktokMusicId ?? undefined,
     });
 
     await prisma.postHistory.create({

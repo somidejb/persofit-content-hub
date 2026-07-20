@@ -92,13 +92,24 @@ export async function postPhotoSlideshow({
   images,
   caption,
   hashtags,
+  musicId,
 }: {
   accessToken: string;
   images: Buffer[];
   caption: string;
   hashtags: string;
+  musicId?: string | null;
 }): Promise<{ publishId: string }> {
   const description = [caption, hashtags].filter(Boolean).join("\n\n").slice(0, 2200);
+
+  const postInfo: Record<string, unknown> = {
+    title: description,
+    privacy_level: "SELF_ONLY",
+    disable_comment: false,
+    disable_duet: false,
+    disable_stitch: false,
+  };
+  if (musicId) postInfo.music_id = musicId;
 
   const initRes = await fetch(TIKTOK_INIT_URL, {
     method: "POST",
@@ -107,15 +118,10 @@ export async function postPhotoSlideshow({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      post_info: {
-        title: description,
-        privacy_level: "SELF_ONLY",
-        disable_comment: false,
-        auto_add_music: true,
-      },
+      post_info: postInfo,
       source_info: {
         source: "FILE_UPLOAD",
-        photo_images: images.map(() => ({})),
+        photo_images: images.map((img) => ({ image_size: img.length })),
         photo_cover_index: 0,
       },
       post_mode: "DIRECT_POST",

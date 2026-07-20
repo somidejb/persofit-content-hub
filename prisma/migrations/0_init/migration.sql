@@ -24,6 +24,7 @@ CREATE TABLE "Slideshow" (
     "aspectRatio" TEXT NOT NULL DEFAULT '9:16',
     "outputWidth" INTEGER NOT NULL DEFAULT 1080,
     "outputHeight" INTEGER NOT NULL DEFAULT 1920,
+    "tiktokMusicId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

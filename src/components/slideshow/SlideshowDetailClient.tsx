@@ -61,6 +61,7 @@ export default function SlideshowDetailClient({
   const [editCaption, setEditCaption] = useState(slideshow.caption ?? "");
   const [editHashtags, setEditHashtags] = useState(slideshow.hashtags ?? "");
   const [editAccountId, setEditAccountId] = useState(slideshow.tiktokAccountId ?? "");
+  const [editMusicId, setEditMusicId] = useState((slideshow as { tiktokMusicId?: string | null }).tiktokMusicId ?? "");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -211,6 +212,7 @@ export default function SlideshowDetailClient({
           caption: editCaption.trim(),
           hashtags: editHashtags.trim(),
           tiktokAccountId: editAccountId || null,
+          tiktokMusicId: editMusicId.trim() || null,
         }),
       });
       if (!res.ok) {
@@ -571,6 +573,20 @@ export default function SlideshowDetailClient({
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
+                  TikTok Music ID <span className="text-zinc-600">(optional)</span>
+                </label>
+                <input
+                  value={editMusicId}
+                  onChange={(e) => setEditMusicId(e.target.value)}
+                  className="input-field w-full font-mono text-sm"
+                  placeholder="e.g. 7106050202075327490"
+                />
+                <p className="mt-1 text-[11px] text-zinc-600">
+                  Find the ID in the TikTok sound URL: tiktok.com/music/name-<strong>7106050202075327490</strong>
+                </p>
               </div>
 
               {editError && (

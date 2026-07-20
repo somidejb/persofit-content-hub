@@ -43,9 +43,10 @@ model Slideshow {
   // slideshow. aspectRatio is a preset key (see src/lib/aspect-ratio-presets.ts)
   // or "custom"; outputWidth/outputHeight are the actual pixel dimensions
   // slides get resized to during generation.
-  aspectRatio String @default("9:16")
-  outputWidth  Int    @default(1080)
-  outputHeight Int    @default(1920)
+  aspectRatio    String  @default("9:16")
+  outputWidth    Int     @default(1080)
+  outputHeight   Int     @default(1920)
+  tiktokMusicId  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
