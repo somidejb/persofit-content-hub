@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { TIKTOK_AUTH_URL } from "@/lib/tiktok";
 import { randomBytes } from "crypto";
 
+export const dynamic = "force-dynamic";
+
 const SCOPES = ["user.info.basic", "video.publish"].join(",");
 
 /**

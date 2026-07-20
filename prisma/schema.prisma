@@ -1,16 +1,16 @@
-// Persofit Content Hub — Prisma schema (SQLite)
+// Persofit Content Hub — Prisma schema (PostgreSQL / Neon)
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-// SQLite has no native enum support in Prisma, so status fields are
-// plain strings constrained at the application layer:
+// Status fields use plain strings (constrained at application layer):
 // Slideshow.status:  DRAFT | SCHEDULED | GENERATING | POSTED | FAILED
 // Schedule.status:   PENDING | GENERATING | POSTED | FAILED
 
