@@ -38,13 +38,15 @@ export default function SlideshowDetailClient({
     if (!lightbox) return;
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") { setLightbox(null); return; }
+      const lb = lightbox;
+      if (!lb) return;
       if (e.key === "ArrowLeft") {
-        const prev = slides.slice(0, lightbox.index).reverse().find((s) => s.finalImagePath);
+        const prev = slides.slice(0, lb.index).reverse().find((s) => s.finalImagePath);
         const prevIdx = prev ? slides.indexOf(prev) : -1;
         if (prev && prevIdx >= 0) setLightbox({ src: prev.finalImagePath!, index: prevIdx });
       }
       if (e.key === "ArrowRight") {
-        const next = slides.slice(lightbox.index + 1).find((s) => s.finalImagePath);
+        const next = slides.slice(lb.index + 1).find((s) => s.finalImagePath);
         const nextIdx = next ? slides.indexOf(next) : -1;
         if (next && nextIdx >= 0) setLightbox({ src: next.finalImagePath!, index: nextIdx });
       }
