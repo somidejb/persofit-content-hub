@@ -34,13 +34,35 @@ export async function generateSlideImage({
   try {
     if (referenceImagePath) {
       // ── Image-to-image edit ──
-      const absolutePath = path.join(process.cwd(), "public", referenceImagePath.replace(/^\//, ""));
       let imageBuffer: Buffer;
-      try {
-        imageBuffer = await readFile(absolutePath);
-      } catch {
-        // Reference image missing (e.g. on a fresh server deployment) — fall back to text-to-image
-        console.warn(`[openaiImageService] Reference image not found on disk: ${referenceImagePath} — falling back to text-to-image`);
+      let ext: string;
+
+      if (referenceImagePath.startsWith("http://") || referenceImagePath.startsWith("https://")) {
+        // Blob URL — fetch over HTTP
+        try {
+          const res = await fetch(referenceImagePath);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          imageBuffer = Buffer.from(await res.arrayBuffer());
+          ext = path.extname(new URL(referenceImagePath).pathname).toLowerCase() || ".jpg";
+        } catch {
+          console.warn(`[openaiImageService] Could not fetch blob reference image: ${referenceImagePath} — falling back to text-to-image`);
+          imageBuffer = Buffer.alloc(0); // triggers fallback below
+          ext = ".jpg";
+        }
+      } else {
+        // Local path
+        const absolutePath = path.join(process.cwd(), "public", referenceImagePath.replace(/^\//, ""));
+        ext = path.extname(absolutePath).toLowerCase();
+        try {
+          imageBuffer = await readFile(absolutePath);
+        } catch {
+          console.warn(`[openaiImageService] Reference image not found on disk: ${referenceImagePath} — falling back to text-to-image`);
+          imageBuffer = Buffer.alloc(0); // triggers fallback below
+        }
+      }
+
+      // If image couldn't be loaded, fall back to text-to-image
+      if (imageBuffer.length === 0) {
         const response = await client.images.generate({
           model,
           prompt,
@@ -57,8 +79,6 @@ export async function generateSlideImage({
         }
         return Buffer.from(fallbackB64, "base64");
       }
-
-      const ext = path.extname(absolutePath).toLowerCase();
       const mimeTypeMap: Record<string, string> = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -70,7 +90,7 @@ export async function generateSlideImage({
       const response = await client.images.edit({
         model,
         prompt,
-        image: await toFile(imageBuffer, path.basename(absolutePath), { type: mimeType }),
+        image: await toFile(imageBuffer, `reference${ext}`, { type: mimeType }),
         size,
         quality: quality as "low" | "medium" | "high" | "auto",
         n: 1,

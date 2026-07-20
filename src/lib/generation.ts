@@ -1,7 +1,8 @@
 import path from "path";
-import { readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import type { Slide, Slideshow, Settings } from "@prisma/client";
+import { put } from "@vercel/blob";
 import { prisma } from "./prisma";
 import { generateSlideImage } from "./openaiImageService";
 import { buildFinalPrompt } from "./prompt-builder";
@@ -14,10 +15,17 @@ type ProgressEvent =
   | { type: "slide_failed"; slideId: string; message: string };
 
 async function saveBuffer(buffer: Buffer): Promise<string> {
-  const filename = `${randomUUID()}.jpg`;
-  const destPath = path.join(process.cwd(), "public", "uploads", "generated", filename);
+  const filename = `generated/${randomUUID()}.jpg`;
+  // Use Vercel Blob in production; fall back to local disk in dev
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const blob = await put(filename, buffer, { access: "public", contentType: "image/jpeg" });
+    return blob.url;
+  }
+  // Local dev fallback — write to public/uploads/generated/
+  const { writeFile } = await import("fs/promises");
+  const destPath = path.join(process.cwd(), "public", "uploads", filename);
   await writeFile(destPath, buffer);
-  return `/uploads/generated/${filename}`;
+  return `/uploads/${filename}`;
 }
 
 /** Settings.openaiApiKey (pasted in the UI) takes priority; falls back to the OPENAI_API_KEY env var. */

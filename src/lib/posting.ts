@@ -68,7 +68,14 @@ export async function postSlideshowNow(slideshowId: string) {
     const accessToken = await getValidAccessToken(slideshow.tiktokAccount.id);
 
     const images = await Promise.all(
-      imagePaths.map((p) => readFile(path.join(process.cwd(), "public", p.replace(/^\//, ""))))
+      imagePaths.map(async (p) => {
+        if (p.startsWith("http://") || p.startsWith("https://")) {
+          const res = await fetch(p);
+          if (!res.ok) throw new Error(`Failed to fetch image from blob: ${p}`);
+          return Buffer.from(await res.arrayBuffer());
+        }
+        return readFile(path.join(process.cwd(), "public", p.replace(/^\//, "")));
+      })
     );
 
     const { publishId } = await postPhotoSlideshow({

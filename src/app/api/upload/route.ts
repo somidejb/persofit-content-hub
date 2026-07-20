@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { put } from "@vercel/blob";
 
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_SIZE_BYTES = 10 * 1024 * 1024;
@@ -21,12 +21,18 @@ export async function POST(req: NextRequest) {
   }
 
   const ext = path.extname(file.name) || ".jpg";
-  const filename = `${randomUUID()}${ext}`;
-  const destDir = path.join(process.cwd(), "public", "uploads", "reference");
-  const destPath = path.join(destDir, filename);
-
+  const filename = `reference/${randomUUID()}${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(destPath, buffer);
 
-  return NextResponse.json({ path: `/uploads/reference/${filename}` }, { status: 201 });
+  // Use Vercel Blob in production; fall back to local disk in dev
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    const blob = await put(filename, buffer, { access: "public", contentType: file.type });
+    return NextResponse.json({ path: blob.url }, { status: 201 });
+  }
+
+  // Local dev fallback
+  const { writeFile } = await import("fs/promises");
+  const destPath = path.join(process.cwd(), "public", "uploads", filename);
+  await writeFile(destPath, buffer);
+  return NextResponse.json({ path: `/uploads/${filename}` }, { status: 201 });
 }

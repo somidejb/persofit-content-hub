@@ -13,6 +13,7 @@
     "@prisma/client": "^5.22.0",
     "@types/jszip": "^3.4.0",
     "@types/node-cron": "^3.0.11",
+    "@vercel/blob": "^2.6.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "jszip": "^3.10.1",
