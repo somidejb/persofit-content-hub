@@ -39,7 +39,23 @@ export async function generateSlideImage({
       try {
         imageBuffer = await readFile(absolutePath);
       } catch {
-        throw new OpenAIImageError(`Reference image not found on disk: ${referenceImagePath}`);
+        // Reference image missing (e.g. on a fresh server deployment) — fall back to text-to-image
+        console.warn(`[openaiImageService] Reference image not found on disk: ${referenceImagePath} — falling back to text-to-image`);
+        const response = await client.images.generate({
+          model,
+          prompt,
+          size,
+          quality: quality as "low" | "medium" | "high" | "auto",
+          n: 1,
+        });
+        const fallbackItem = response.data?.[0];
+        const fallbackB64 = fallbackItem?.b64_json ?? (fallbackItem as { url?: string } | undefined)?.url;
+        if (!fallbackB64) throw new OpenAIImageError("OpenAI fallback response did not contain image data");
+        if (fallbackB64.startsWith("http")) {
+          const fetched = await fetch(fallbackB64);
+          return Buffer.from(await fetched.arrayBuffer());
+        }
+        return Buffer.from(fallbackB64, "base64");
       }
 
       const ext = path.extname(absolutePath).toLowerCase();
