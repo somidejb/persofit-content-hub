@@ -64,7 +64,17 @@ async function generateOneSlide(
 
     const picked = validPool[Math.floor(Math.random() * validPool.length)];
     const absPath = path.join(process.cwd(), "public", picked.replace(/^\//, ""));
-    const rawBuffer = await readFile(absPath);
+    let rawBuffer: Buffer;
+    try {
+      rawBuffer = await readFile(absPath);
+    } catch {
+      // Pool image missing on this server (e.g. fresh deployment) — fall back to text-to-image
+      console.warn(`[generation] Pool image not found on disk: ${picked} — falling back to text-to-image`);
+      const apiKey = resolveOpenAIApiKey(settings);
+      if (!apiKey) throw new Error("OpenAI API key is not configured and pool image is unavailable.");
+      const prompt = buildFinalPrompt({ customPrompt: slide.customPrompt, variationDirection: slide.variationDirection, siblingIndex, siblingTotal });
+      rawBuffer = await generateSlideImage({ apiKey, model: settings.imageModel, quality: settings.imageQuality, referenceImagePath: null, prompt, outputWidth: slideshow.outputWidth, outputHeight: slideshow.outputHeight });
+    }
     const generatedImagePath = await saveBuffer(rawBuffer);
 
     const processedBuffer = await normalizeToOutputSize(rawBuffer, slideshow.outputWidth, slideshow.outputHeight);
