@@ -25,6 +25,7 @@ export default function SlideshowDetailClient({
   // True while a generate-all stream is active in this session
   const [generating, setGenerating] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [postResult, setPostResult] = useState<{ ok: true; publishId: string } | { ok: false; error: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [individuallyGenerating, setIndividuallyGenerating] = useState<Set<string>>(new Set());
 
@@ -159,14 +160,18 @@ export default function SlideshowDetailClient({
 
   async function handlePostNow() {
     setActionError(null);
+    setPostResult(null);
     setPosting(true);
     try {
       const res = await fetch(`/api/slideshows/${slideshow.id}/post`, { method: "POST" });
       const body = await res.json();
       if (!res.ok) {
-        setActionError(body.error || "Failed to post to TikTok");
+        const msg = body.error || "Failed to post to TikTok";
+        setActionError(msg);
+        setPostResult({ ok: false, error: msg });
         setStatus("FAILED");
       } else {
+        setPostResult({ ok: true, publishId: body.publishId ?? "" });
         setStatus("POSTED");
       }
     } finally {
@@ -274,7 +279,8 @@ export default function SlideshowDetailClient({
             className="btn-secondary"
             title={!allGenerated ? "Generate all slides first" : !slideshow.tiktokAccountId ? "Assign a TikTok account first" : ""}
           >
-            <Send size={15} /> {posting ? "Posting…" : "Post Now"}
+            {posting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+            {posting ? "Posting…" : "Post Now"}
           </button>
           {allGenerated && (
             <a
@@ -291,7 +297,47 @@ export default function SlideshowDetailClient({
         </div>
       </div>
 
-      {actionError && (
+      {/* Posting progress / result banner */}
+      {posting && (
+        <div className="card border-blue-500/30 bg-blue-500/5 p-4 flex items-center gap-3">
+          <Loader2 size={18} className="animate-spin text-blue-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-300">Sending to TikTok…</p>
+            <p className="text-xs text-zinc-500 mt-0.5">TikTok is fetching your slides. This usually takes 5–15 seconds.</p>
+          </div>
+        </div>
+      )}
+
+      {!posting && postResult?.ok && (
+        <div className="card border-green-500/30 bg-green-500/5 p-4 flex items-start gap-3">
+          <span className="mt-0.5 flex-shrink-0 text-green-400 text-lg">✓</span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-green-300">Posted to TikTok successfully!</p>
+            {postResult.publishId && (
+              <p className="text-xs text-zinc-500 mt-0.5 font-mono break-all">Publish ID: {postResult.publishId}</p>
+            )}
+            <p className="text-xs text-zinc-600 mt-1">The post is processing on TikTok's end — it may take a minute to appear on your profile.</p>
+          </div>
+          <button onClick={() => setPostResult(null)} className="ml-auto flex-shrink-0 text-zinc-600 hover:text-zinc-400">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {!posting && postResult && !postResult.ok && (
+        <div className="card border-red-500/30 bg-red-500/5 p-4 flex items-start gap-3">
+          <span className="mt-0.5 flex-shrink-0 text-red-400 text-lg">✕</span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-red-300">Failed to post to TikTok</p>
+            <p className="text-xs text-red-400/80 mt-0.5 break-all">{postResult.error}</p>
+          </div>
+          <button onClick={() => setPostResult(null)} className="ml-auto flex-shrink-0 text-zinc-600 hover:text-zinc-400">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {actionError && !postResult && (
         <div className="card border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">{actionError}</div>
       )}
 
