@@ -236,6 +236,7 @@ async function executeTemplateRun(
     caption: string | null;
     hashtags: string | null;
     tiktokAccountId: string | null;
+    tiktokMusicId: string | null;
     aspectRatio: string;
     outputWidth: number;
     outputHeight: number;
