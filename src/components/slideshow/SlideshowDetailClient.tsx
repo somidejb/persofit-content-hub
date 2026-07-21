@@ -62,7 +62,15 @@ export default function SlideshowDetailClient({
   const [editCaption, setEditCaption] = useState(slideshow.caption ?? "");
   const [editHashtags, setEditHashtags] = useState(slideshow.hashtags ?? "");
   const [editAccountId, setEditAccountId] = useState(slideshow.tiktokAccountId ?? "");
-  const [editMusicId, setEditMusicId] = useState((slideshow as { tiktokMusicId?: string | null }).tiktokMusicId ?? "");
+  const [editMusicRaw, setEditMusicRaw] = useState((slideshow as { tiktokMusicId?: string | null }).tiktokMusicId ?? "");
+  // Accept either a bare ID or a full TikTok sound URL and extract the numeric ID
+  const editMusicId = (() => {
+    const raw = editMusicRaw.trim();
+    if (!raw) return "";
+    // URL format: tiktok.com/music/sound-name-1234567890 — extract trailing digits
+    const match = raw.match(/(\d{10,})(?:[^0-9].*)?$/);
+    return match ? match[1] : raw;
+  })();
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -622,16 +630,29 @@ export default function SlideshowDetailClient({
               </div>
               <div>
                 <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-                  TikTok Music ID <span className="text-zinc-600">(optional)</span>
+                  TikTok Sound <span className="text-zinc-600">(optional)</span>
                 </label>
                 <input
-                  value={editMusicId}
-                  onChange={(e) => setEditMusicId(e.target.value)}
-                  className="input-field w-full font-mono text-sm"
-                  placeholder="e.g. 7106050202075327490"
+                  value={editMusicRaw}
+                  onChange={(e) => setEditMusicRaw(e.target.value)}
+                  className="input-field w-full text-sm"
+                  placeholder="Paste TikTok sound URL or bare ID"
                 />
-                <p className="mt-1 text-[11px] text-zinc-600">
-                  Find the ID in the TikTok sound URL: tiktok.com/music/name-<strong>7106050202075327490</strong>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-zinc-600">
+                    Paste the full URL from TikTok — the ID is extracted automatically
+                    {editMusicId && <span className="ml-1 font-mono text-zinc-500">({editMusicId})</span>}
+                  </p>
+                  {editMusicId && (
+                    <a
+                      href={`https://www.tiktok.com/music/-${editMusicId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-shrink-0 text-[11px] text-blue-400 hover:text-blue-300 underline"
+                    >
+                      Listen on TikTok ↗
+                    </a>
+                  )}
                 </p>
               </div>
 
