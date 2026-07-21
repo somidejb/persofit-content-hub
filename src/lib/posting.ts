@@ -72,10 +72,12 @@ export async function postSlideshowNow(slideshowId: string) {
 
   const imageUrls = rawPaths.map((p) => {
     if (p.startsWith("http://") || p.startsWith("https://")) {
-      // Rewrite blob URLs through our proxy so TikTok sees our verified domain
-      return `${appUrl}/api/media/proxy?url=${encodeURIComponent(p)}`;
+      // Encode blob URL into the path so it starts with /api/media/proxy/
+      // matching TikTok's verified URL prefix exactly.
+      const encoded = Buffer.from(p).toString("base64url");
+      return `${appUrl}/api/media/proxy/${encoded}`;
     }
-    // Local dev path — still won't work from TikTok's servers, but correct format
+    // Local dev path — TikTok can't reach localhost, but correct format
     return `${appUrl}${p.startsWith("/") ? "" : "/"}${p}`;
   });
 

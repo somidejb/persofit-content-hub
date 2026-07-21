@@ -3,32 +3,20 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 /**
- * Proxies a Vercel Blob image through this app's own verified domain.
- *
- * TikTok's PULL_FROM_URL requires photo_images URLs to start with a
- * developer-verified URL prefix (e.g. https://domain/api/media/proxy/).
- * Raw Blob URLs live on vercel-storage.com which we don't own, so we
- * route them through this proxy.
- *
- * URL format (path-based so it matches the /api/media/proxy/ prefix):
- *   GET /api/media/proxy/[base64url-encoded-blob-url]
- *
- * Example:
- *   blob URL : https://xxxx.public.blob.vercel-storage.com/img.jpg
- *   proxy URL: https://yourdomain.vercel.app/api/media/proxy/aHR0cHM6Ly94...
+ * Handles GET /api/media/proxy/[base64url-encoded-blob-url]
+ * The encoded segment is a base64url-encoded Vercel Blob HTTPS URL.
+ * This path-based format is required so TikTok's prefix matching works:
+ *   verified prefix : https://domain/api/media/proxy/
+ *   our proxy URL   : https://domain/api/media/proxy/aHR0cHM6Ly94...  ✓
  */
-export async function GET(req: NextRequest) {
-  const segments = req.nextUrl.pathname.split("/api/media/proxy/");
-  const encoded = segments[1] ?? "";
-
-  if (!encoded) {
-    return NextResponse.json({ error: "Missing encoded URL in path" }, { status: 400 });
-  }
-
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { encoded: string } }
+) {
   let targetUrl: string;
   try {
-    targetUrl = Buffer.from(encoded, "base64url").toString("utf8");
-    new URL(targetUrl); // validate
+    targetUrl = Buffer.from(params.encoded, "base64url").toString("utf8");
+    new URL(targetUrl);
   } catch {
     return NextResponse.json({ error: "Invalid encoded URL" }, { status: 400 });
   }
