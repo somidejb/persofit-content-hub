@@ -45,6 +45,7 @@ export function toSlideshowCard(s: FullSlideshow): MockSlideshow {
     status: s.status as MockSlideshow["status"],
     tiktokAccountId: s.tiktokAccountId,
     tiktokAccountName: s.tiktokAccount?.name ?? null,
+    tiktokMusicId: s.tiktokMusicId ?? null,
     aspectRatio: s.aspectRatio,
     outputWidth: s.outputWidth,
     outputHeight: s.outputHeight,

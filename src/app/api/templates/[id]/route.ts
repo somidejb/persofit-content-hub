@@ -71,7 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json();
 
   const {
-    name, caption, hashtags, tiktokAccountId, concept, variables,
+    name, caption, hashtags, tiktokAccountId, tiktokMusicId, concept, variables,
     slideCount, referenceImagePath, aspectRatio, outputWidth, outputHeight,
     postTime, scheduleDays, autoPost, active, templateSlides,
   } = body;
@@ -81,6 +81,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (caption !== undefined) data.caption = caption;
   if (hashtags !== undefined) data.hashtags = hashtags;
   if (tiktokAccountId !== undefined) data.tiktokAccountId = tiktokAccountId || null;
+  if (tiktokMusicId !== undefined) data.tiktokMusicId = tiktokMusicId || null;
   if (concept !== undefined) data.concept = concept;
   if (variables !== undefined) data.variables = variables || null;
   if (slideCount !== undefined) data.slideCount = slideCount;

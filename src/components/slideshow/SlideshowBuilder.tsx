@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Save, User, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import MusicField, { extractMusicId } from "@/components/ui/MusicField";
 import SlideEditor, { SlideDraft } from "./SlideEditor";
 import AIPlannerForm from "./AIPlannerForm";
 import ScheduleEditor from "./ScheduleEditor";
@@ -59,6 +60,7 @@ export default function SlideshowBuilder({ initialSlides }: { initialSlides?: Sl
   const [slides, setSlides] = useState<SlideDraft[]>(initialSlides ?? [emptySlide()]);
   const [postTime, setPostTime] = useState("09:00");
   const [dates, setDates] = useState<string[]>([]);
+  const [musicRaw, setMusicRaw] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aiPlannerOpen, setAiPlannerOpen] = useState(false);
@@ -142,6 +144,7 @@ export default function SlideshowBuilder({ initialSlides }: { initialSlides?: Sl
           caption,
           hashtags,
           tiktokAccountId: accountId || null,
+          tiktokMusicId: extractMusicId(musicRaw) || null,
           aspectRatio,
           outputWidth,
           outputHeight,
@@ -235,6 +238,7 @@ export default function SlideshowBuilder({ initialSlides }: { initialSlides?: Sl
             </p>
           )}
         </div>
+        <MusicField value={musicRaw} onChange={setMusicRaw} />
       </div>
 
       <div className="card flex flex-col gap-4 p-5">

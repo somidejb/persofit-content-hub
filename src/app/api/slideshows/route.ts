@@ -21,7 +21,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { name, caption, hashtags, tiktokAccountId, aspectRatio, outputWidth, outputHeight, slides, schedule } = body;
+  const { name, caption, hashtags, tiktokAccountId, tiktokMusicId, aspectRatio, outputWidth, outputHeight, slides, schedule } = body;
 
   if (!name || typeof name !== "string") {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
       hashtags: hashtags || "",
       status: hasSchedule ? "SCHEDULED" : "DRAFT",
       tiktokAccountId: tiktokAccountId || null,
+      tiktokMusicId: tiktokMusicId || null,
       aspectRatio: (aspectRatio as string) || "9:16",
       outputWidth: typeof outputWidth === "number" ? outputWidth : 1080,
       outputHeight: typeof outputHeight === "number" ? outputHeight : 1920,

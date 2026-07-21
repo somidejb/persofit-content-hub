@@ -293,6 +293,7 @@ async function executeTemplateRun(
       hashtags: template.hashtags ?? undefined,
       status: "DRAFT",
       tiktokAccountId: template.tiktokAccountId ?? null,
+      tiktokMusicId: template.tiktokMusicId ?? null,
       aspectRatio: template.aspectRatio,
       outputWidth: template.outputWidth,
       outputHeight: template.outputHeight,

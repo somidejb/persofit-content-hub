@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, X, Plus, Bot } from "lucide-react";
 import { ASPECT_RATIO_PRESETS } from "@/lib/aspect-ratio-presets";
+import MusicField, { extractMusicId } from "@/components/ui/MusicField";
 import TemplateRunPreview from "./TemplateRunPreview";
 import TemplateSlideEditor, {
   type TemplateSlideDraft,
@@ -55,6 +56,7 @@ interface TemplateFormProps {
     caption: string;
     hashtags: string;
     tiktokAccountId: string | null;
+    tiktokMusicId?: string | null;
     concept: string;
     variables: string | null;
     slideCount: number;
@@ -78,6 +80,7 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
   const [caption, setCaption] = useState(initialValues?.caption ?? "");
   const [hashtags, setHashtags] = useState(initialValues?.hashtags ?? "");
   const [tiktokAccountId, setTiktokAccountId] = useState(initialValues?.tiktokAccountId ?? "");
+  const [musicRaw, setMusicRaw] = useState(initialValues?.tiktokMusicId ?? "");
   const [concept, setConcept] = useState(initialValues?.concept ?? "");
   const [variables, setVariables] = useState(initialValues?.variables ?? "");
   const [slideCount, setSlideCount] = useState(initialValues?.slideCount ?? 7);
@@ -177,6 +180,7 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
       caption: caption.trim(),
       hashtags: hashtags.trim(),
       tiktokAccountId: tiktokAccountId || null,
+      tiktokMusicId: extractMusicId(musicRaw) || null,
       concept: concept.trim(),
       variables: variables.trim() || null,
       slideCount,
@@ -302,6 +306,7 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
               ))}
             </select>
           </div>
+          <MusicField value={musicRaw} onChange={setMusicRaw} />
         </div>
       </section>
 

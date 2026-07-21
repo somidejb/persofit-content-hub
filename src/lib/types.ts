@@ -40,6 +40,7 @@ export type MockSlideshow = {
   status: "DRAFT" | "SCHEDULED" | "GENERATING" | "POSTED" | "FAILED";
   tiktokAccountId: string | null;
   tiktokAccountName: string | null;
+  tiktokMusicId: string | null;
   aspectRatio: string;
   outputWidth: number;
   outputHeight: number;

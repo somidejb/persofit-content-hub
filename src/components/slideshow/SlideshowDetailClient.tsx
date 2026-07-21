@@ -1,9 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn } from "lucide-react";
+import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn, GripVertical } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  rectSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import StatusBadge from "@/components/ui/StatusBadge";
+import MusicField, { extractMusicId } from "@/components/ui/MusicField";
 import type { MockSlideshow, MockScheduleEntry, MockHistoryEntry } from "@/lib/types";
 
 type Account = { id: string; name: string };
@@ -28,6 +44,37 @@ export default function SlideshowDetailClient({
   const [postResult, setPostResult] = useState<{ ok: true; publishId: string } | { ok: false; error: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [individuallyGenerating, setIndividuallyGenerating] = useState<Set<string>>(new Set());
+
+  // DnD sensors — require 8px movement before activating so click handlers still fire
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  // Persist slide order after each drag-end
+  const [pendingReorder, setPendingReorder] = useState<string[] | null>(null);
+
+  const triggerReorder = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      // Compute the new ordered IDs first (same logic as handleDragEnd)
+      const oldIndex = slides.findIndex((s) => s.id === active.id);
+      const newIndex = slides.findIndex((s) => s.id === over.id);
+      const reordered = arrayMove(slides, oldIndex, newIndex);
+      setSlides(reordered);
+      setPendingReorder(reordered.map((s) => s.id));
+    },
+    [slides]
+  );
+
+  useEffect(() => {
+    if (!pendingReorder) return;
+    fetch(`/api/slideshows/${slideshow.id}/reorder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderedIds: pendingReorder }),
+    }).finally(() => setPendingReorder(null));
+  }, [pendingReorder, slideshow.id]);
 
   // Derive progress counts from slide states (works even if stream started elsewhere)
   const generatingCount = slides.filter((s) => s.status === "generating").length;
@@ -62,15 +109,7 @@ export default function SlideshowDetailClient({
   const [editCaption, setEditCaption] = useState(slideshow.caption ?? "");
   const [editHashtags, setEditHashtags] = useState(slideshow.hashtags ?? "");
   const [editAccountId, setEditAccountId] = useState(slideshow.tiktokAccountId ?? "");
-  const [editMusicRaw, setEditMusicRaw] = useState((slideshow as { tiktokMusicId?: string | null }).tiktokMusicId ?? "");
-  // Accept either a bare ID or a full TikTok sound URL and extract the numeric ID
-  const editMusicId = (() => {
-    const raw = editMusicRaw.trim();
-    if (!raw) return "";
-    // URL format: tiktok.com/music/sound-name-1234567890 — extract trailing digits
-    const match = raw.match(/(\d{10,})(?:[^0-9].*)?$/);
-    return match ? match[1] : raw;
-  })();
+  const [editMusicRaw, setEditMusicRaw] = useState(slideshow.tiktokMusicId ?? "");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -225,7 +264,7 @@ export default function SlideshowDetailClient({
           caption: editCaption.trim(),
           hashtags: editHashtags.trim(),
           tiktokAccountId: editAccountId || null,
-          tiktokMusicId: editMusicId.trim() || null,
+          tiktokMusicId: extractMusicId(editMusicRaw) || null,
         }),
       });
       if (!res.ok) {
@@ -376,73 +415,29 @@ export default function SlideshowDetailClient({
       )}
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-white">
-          Slides <span className="text-zinc-500">({slides.length})</span>
-        </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {slides.map((slide, i) => {
-            const thumb = slide.finalImagePath || slide.generatedImagePath || slide.referenceImagePath;
-            const isGeneratingThis = individuallyGenerating.has(slide.id) || slide.status === "generating";
-            return (
-              <div key={slide.id} className="card overflow-hidden p-3">
-                <div className="mb-2 flex h-32 w-full items-center justify-center overflow-hidden rounded-lg bg-surface-200 text-zinc-600">
-                  {thumb ? (
-                    <button
-                      onClick={() => slide.finalImagePath && setLightbox({ src: slide.finalImagePath, index: i })}
-                      className={`group relative h-full w-full ${slide.finalImagePath ? "cursor-zoom-in" : "cursor-default"}`}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={thumb} alt={`Slide ${i + 1}`} className="h-full w-full object-cover" />
-                      {slide.finalImagePath && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg">
-                          <ZoomIn size={20} className="text-white" />
-                        </div>
-                      )}
-                    </button>
-                  ) : (
-                    <span className="text-xs">Slide {i + 1}</span>
-                  )}
-                </div>
-                <p className="mb-1 line-clamp-2 text-[11px] font-medium text-zinc-300">
-                  {slide.customPrompt ? slide.customPrompt.slice(0, 60) + (slide.customPrompt.length > 60 ? "…" : "") : `Slide ${i + 1}`}
-                </p>
-                {slide.overlayText && (
-                  <p className="mb-1.5 line-clamp-2 text-[11px] text-zinc-500">&ldquo;{slide.overlayText}&rdquo;</p>
-                )}
-                <div className="mb-1.5 flex items-center justify-between gap-2">
-                  <StatusBadgeFor status={slide.status} />
-                  <div className="flex items-center gap-1.5">
-                    {slide.finalImagePath && (
-                      <a
-                        href={slide.finalImagePath}
-                        download={`slide-${i + 1}.jpg`}
-                        title="Download this slide"
-                        className="text-zinc-500 hover:text-neon transition"
-                      >
-                        <Download size={13} />
-                      </a>
-                    )}
-                    <button
-                      onClick={() => handleGenerateSlide(slide.id)}
-                      disabled={isGeneratingThis || generating}
-                      title={slide.status === "done" ? "Regenerate this slide" : "Generate this slide"}
-                      className="text-zinc-500 hover:text-neon disabled:opacity-40"
-                    >
-                      {isGeneratingThis ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <RefreshCw size={13} />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                {slide.status === "failed" && slide.errorMessage && (
-                  <p className="line-clamp-2 text-[10px] text-red-400">{slide.errorMessage}</p>
-                )}
-              </div>
-            );
-          })}
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-white">
+            Slides <span className="text-zinc-500">({slides.length})</span>
+          </h2>
+          <p className="text-[11px] text-zinc-600">Drag a card to reorder</p>
         </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={triggerReorder}>
+          <SortableContext items={slides.map((s) => s.id)} strategy={rectSortingStrategy}>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {slides.map((slide, i) => (
+                <SortableSlideCard
+                  key={slide.id}
+                  slide={slide}
+                  index={i}
+                  isGeneratingThis={individuallyGenerating.has(slide.id) || slide.status === "generating"}
+                  generating={generating}
+                  onZoom={(src, idx) => setLightbox({ src, index: idx })}
+                  onGenerate={handleGenerateSlide}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -628,33 +623,7 @@ export default function SlideshowDetailClient({
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-                  TikTok Sound <span className="text-zinc-600">(optional)</span>
-                </label>
-                <input
-                  value={editMusicRaw}
-                  onChange={(e) => setEditMusicRaw(e.target.value)}
-                  className="input-field w-full text-sm"
-                  placeholder="Paste TikTok sound URL or bare ID"
-                />
-                <div className="mt-1.5 flex items-center justify-between gap-2">
-                  <p className="text-[11px] text-zinc-600">
-                    Paste the full URL from TikTok — the ID is extracted automatically
-                    {editMusicId && <span className="ml-1 font-mono text-zinc-500">({editMusicId})</span>}
-                  </p>
-                  {editMusicId && (
-                    <a
-                      href={`https://www.tiktok.com/music/-${editMusicId}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-shrink-0 text-[11px] text-blue-400 hover:text-blue-300 underline"
-                    >
-                      Listen on TikTok ↗
-                    </a>
-                  )}
-                </div>
-              </div>
+              <MusicField value={editMusicRaw} onChange={setEditMusicRaw} />
 
               {editError && (
                 <p className="text-xs text-red-400 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
@@ -682,6 +651,115 @@ export default function SlideshowDetailClient({
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+type SlideItem = MockSlideshow["slides"][number];
+
+interface SortableSlideCardProps {
+  slide: SlideItem;
+  index: number;
+  isGeneratingThis: boolean;
+  generating: boolean;
+  onZoom: (src: string, index: number) => void;
+  onGenerate: (id: string) => void;
+}
+
+function SortableSlideCard({
+  slide,
+  index,
+  isGeneratingThis,
+  generating,
+  onZoom,
+  onGenerate,
+}: SortableSlideCardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: slide.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  const thumb = slide.finalImagePath || slide.generatedImagePath || slide.referenceImagePath;
+
+  return (
+    <div ref={setNodeRef} style={style} className="card overflow-hidden p-3">
+      {/* Drag handle row */}
+      <div className="mb-2 flex h-32 w-full items-center justify-center overflow-hidden rounded-lg bg-surface-200 text-zinc-600 relative group/thumb">
+        {thumb ? (
+          <button
+            onClick={() => slide.finalImagePath && onZoom(slide.finalImagePath, index)}
+            className={`h-full w-full ${slide.finalImagePath ? "cursor-zoom-in" : "cursor-default"}`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={thumb} alt={`Slide ${index + 1}`} className="h-full w-full object-cover" />
+            {slide.finalImagePath && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity rounded-lg">
+                <ZoomIn size={20} className="text-white" />
+              </div>
+            )}
+          </button>
+        ) : (
+          <span className="text-xs">Slide {index + 1}</span>
+        )}
+        {/* Drag handle overlay */}
+        <button
+          {...attributes}
+          {...listeners}
+          className="absolute top-1 left-1 flex items-center justify-center rounded bg-black/50 p-1 text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity cursor-grab active:cursor-grabbing touch-none"
+          title="Drag to reorder"
+          aria-label="Drag to reorder slide"
+        >
+          <GripVertical size={14} />
+        </button>
+        {/* Slide number badge */}
+        <span className="absolute top-1 right-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          {index + 1}
+        </span>
+      </div>
+      <p className="mb-1 line-clamp-2 text-[11px] font-medium text-zinc-300">
+        {slide.customPrompt
+          ? slide.customPrompt.slice(0, 60) + (slide.customPrompt.length > 60 ? "…" : "")
+          : `Slide ${index + 1}`}
+      </p>
+      {slide.overlayText && (
+        <p className="mb-1.5 line-clamp-2 text-[11px] text-zinc-500">&ldquo;{slide.overlayText}&rdquo;</p>
+      )}
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <StatusBadgeFor status={slide.status} />
+        <div className="flex items-center gap-1.5">
+          {slide.finalImagePath && (
+            <a
+              href={slide.finalImagePath}
+              download={`slide-${index + 1}.jpg`}
+              title="Download this slide"
+              className="text-zinc-500 hover:text-neon transition"
+            >
+              <Download size={13} />
+            </a>
+          )}
+          <button
+            onClick={() => onGenerate(slide.id)}
+            disabled={isGeneratingThis || generating}
+            title={slide.status === "done" ? "Regenerate this slide" : "Generate this slide"}
+            className="text-zinc-500 hover:text-neon disabled:opacity-40"
+          >
+            {isGeneratingThis ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <RefreshCw size={13} />
+            )}
+          </button>
+        </div>
+      </div>
+      {slide.status === "failed" && slide.errorMessage && (
+        <p className="line-clamp-2 text-[10px] text-red-400">{slide.errorMessage}</p>
       )}
     </div>
   );

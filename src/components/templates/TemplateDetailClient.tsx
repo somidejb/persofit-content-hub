@@ -59,6 +59,7 @@ type Template = {
   caption: string;
   hashtags: string;
   tiktokAccountId: string | null;
+  tiktokMusicId: string | null;
   concept: string;
   variables: string | null;
   slideCount: number;

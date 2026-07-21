@@ -150,6 +150,7 @@ model SlideshowTemplate {
   scheduleDays       String    @default("[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\",\"sat\",\"sun\"]")
   autoPost           Boolean   @default(false)
   active             Boolean   @default(true)
+  tiktokMusicId      String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
