@@ -62,19 +62,22 @@ export async function postSlideshowNow(slideshowId: string) {
 
   const rawPaths = slideshow.slides.map((s) => s.finalImagePath as string);
 
-  // Build public HTTPS URLs for TikTok to pull from.
-  // In production (Vercel) finalImagePath is already a Vercel Blob https:// URL.
-  // In local dev it's a /uploads/... path; we construct a localhost URL as best-effort
-  // (TikTok cannot reach localhost, so posting only fully works in production).
-  const baseUrl = process.env.VERCEL_URL
-    ? `https://${process.env.VERCEL_URL}`
-    : (process.env.NEXTAUTH_URL ?? "http://localhost:3000");
+  // TikTok's PULL_FROM_URL requires images to be on a developer-verified domain.
+  // Raw Vercel Blob URLs (*.vercel-storage.com) are on a domain we don't own, so
+  // we proxy them through our own app domain via /api/media/proxy.
+  // Set NEXT_PUBLIC_APP_URL in Vercel env vars to your stable production URL.
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-  const imageUrls = rawPaths.map((p) =>
-    p.startsWith("http://") || p.startsWith("https://")
-      ? p
-      : `${baseUrl}${p.startsWith("/") ? "" : "/"}${p}`
-  );
+  const imageUrls = rawPaths.map((p) => {
+    if (p.startsWith("http://") || p.startsWith("https://")) {
+      // Rewrite blob URLs through our proxy so TikTok sees our verified domain
+      return `${appUrl}/api/media/proxy?url=${encodeURIComponent(p)}`;
+    }
+    // Local dev path — still won't work from TikTok's servers, but correct format
+    return `${appUrl}${p.startsWith("/") ? "" : "/"}${p}`;
+  });
 
   try {
     const accessToken = await getValidAccessToken(slideshow.tiktokAccount.id);
