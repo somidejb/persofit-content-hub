@@ -316,7 +316,7 @@ export default function SlideshowDetailClient({
             {postResult.publishId && (
               <p className="text-xs text-zinc-500 mt-0.5 font-mono break-all">Publish ID: {postResult.publishId}</p>
             )}
-            <p className="text-xs text-zinc-600 mt-1">The post is processing on TikTok's end — it may take a minute to appear on your profile.</p>
+            <p className="text-xs text-zinc-600 mt-1">The post is processing on TikTok&apos;s end — it may take a minute to appear on your profile.</p>
           </div>
           <button onClick={() => setPostResult(null)} className="ml-auto flex-shrink-0 text-zinc-600 hover:text-zinc-400">
             <X size={14} />
