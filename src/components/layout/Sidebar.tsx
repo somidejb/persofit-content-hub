@@ -12,6 +12,7 @@ import {
   Settings,
   Zap,
   LayoutTemplate,
+  X,
 } from "lucide-react";
 
 const STATIC_NAV_ITEMS = [
@@ -24,7 +25,12 @@ const STATIC_NAV_ITEMS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -46,15 +52,33 @@ export default function Sidebar() {
   }, []);
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-surface-border bg-surface px-4 py-5">
-      <div className="mb-8 flex items-center gap-2 px-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neon/10 text-neon shadow-neon-sm">
-          <Zap size={18} strokeWidth={2.5} />
+    <aside
+      className={`
+        fixed inset-y-0 left-0 z-40 flex w-64 flex-col
+        border-r border-surface-border bg-surface px-4 py-5
+        transition-transform duration-200 ease-in-out
+        ${open ? "translate-x-0" : "-translate-x-full"}
+        lg:w-60 lg:translate-x-0
+      `}
+    >
+      {/* Header row: logo + mobile close button */}
+      <div className="mb-8 flex items-center justify-between px-2">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neon/10 text-neon shadow-neon-sm">
+            <Zap size={18} strokeWidth={2.5} />
+          </div>
+          <div>
+            <p className="text-sm font-bold leading-tight text-white">Persofit</p>
+            <p className="text-[11px] leading-tight text-zinc-500">Content Hub</p>
+          </div>
         </div>
-        <div>
-          <p className="text-sm font-bold leading-tight text-white">Persofit</p>
-          <p className="text-[11px] leading-tight text-zinc-500">Content Hub</p>
-        </div>
+        <button
+          onClick={onClose}
+          className="flex items-center justify-center rounded-lg p-1.5 text-zinc-400 hover:bg-surface-200 hover:text-white lg:hidden"
+          aria-label="Close menu"
+        >
+          <X size={18} />
+        </button>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1">

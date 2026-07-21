@@ -62,12 +62,12 @@ export default function CalendarView({ entries }: { entries: MockScheduleEntry[]
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-medium text-zinc-500">
+        <div className="grid grid-cols-7 gap-0.5 text-center text-[10px] font-medium text-zinc-500 sm:gap-1 sm:text-[11px]">
           {WEEKDAYS.map((d) => (
-            <div key={d} className="pb-2">{d}</div>
+            <div key={d} className="pb-1.5 sm:pb-2">{d.slice(0, 1)}<span className="hidden sm:inline">{d.slice(1)}</span></div>
           ))}
         </div>
-        <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1">
           {cells.map((day, idx) => {
             if (day === null) return <div key={idx} />;
             const key = toKey(year, month, day);
@@ -78,7 +78,7 @@ export default function CalendarView({ entries }: { entries: MockScheduleEntry[]
               <button
                 key={idx}
                 onClick={() => setSelectedDate(dayEntries.length ? key : null)}
-                className={`flex min-h-16 flex-col items-start gap-1 rounded-lg border p-1.5 text-left transition ${
+                className={`flex min-h-9 flex-col items-start gap-0.5 rounded border p-0.5 text-left transition sm:min-h-16 sm:gap-1 sm:rounded-lg sm:p-1.5 ${
                   isSelected
                     ? "border-neon/50 bg-neon/10"
                     : dayEntries.length
@@ -86,15 +86,23 @@ export default function CalendarView({ entries }: { entries: MockScheduleEntry[]
                     : "border-transparent hover:bg-surface-200/50"
                 }`}
               >
-                <span className={`text-xs ${isToday ? "font-bold text-neon" : "text-zinc-400"}`}>{day}</span>
-                {dayEntries.slice(0, 2).map((e) => (
-                  <span key={e.id} className="w-full truncate rounded bg-surface-300 px-1 text-[10px] text-zinc-300">
-                    {e.time} · {e.slideshowName}
-                  </span>
-                ))}
-                {dayEntries.length > 2 && (
-                  <span className="text-[10px] text-zinc-500">+{dayEntries.length - 2} more</span>
-                )}
+                <span className={`text-[10px] sm:text-xs ${isToday ? "font-bold text-neon" : "text-zinc-400"}`}>{day}</span>
+                {/* On mobile: just show a dot per event; on sm+: show label */}
+                <div className="flex flex-wrap gap-0.5 sm:hidden">
+                  {dayEntries.slice(0, 3).map((e) => (
+                    <span key={e.id} className="h-1.5 w-1.5 rounded-full bg-neon/70" />
+                  ))}
+                </div>
+                <div className="hidden w-full sm:flex sm:flex-col sm:gap-1">
+                  {dayEntries.slice(0, 2).map((e) => (
+                    <span key={e.id} className="w-full truncate rounded bg-surface-300 px-1 text-[10px] text-zinc-300">
+                      {e.time} · {e.slideshowName}
+                    </span>
+                  ))}
+                  {dayEntries.length > 2 && (
+                    <span className="text-[10px] text-zinc-500">+{dayEntries.length - 2} more</span>
+                  )}
+                </div>
               </button>
             );
           })}

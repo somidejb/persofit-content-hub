@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/layout/AppShell";
@@ -11,6 +11,12 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Persofit Content Hub",
   description: "AI-generated TikTok slideshow content, scheduled and posted automatically.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({

@@ -8,9 +8,16 @@
   --font-sans: "Inter", system-ui, sans-serif;
 }
 
+html {
+  overflow-x: hidden;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
+  overflow-x: hidden;
+  /* Prevent double-tap zoom on interactive elements */
+  touch-action: manipulation;
 }
 
 @layer utilities {

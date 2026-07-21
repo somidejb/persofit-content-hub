@@ -101,11 +101,11 @@ export default function AccountsClient({ initialAccounts }: { initialAccounts: M
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-zinc-500">
           Use <strong className="text-zinc-400">Connect with TikTok</strong> for automatic OAuth, or paste a token manually.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <a
             href="/api/auth/tiktok"
             className="btn-primary flex items-center gap-1.5 text-sm no-underline"
