@@ -37,23 +37,28 @@ export default function MusicField({ value, onChange, className = "" }: MusicFie
         className="input-field w-full text-sm"
         placeholder="Paste TikTok sound URL or bare ID"
       />
-      <div className="mt-1.5 flex items-center justify-between gap-2 min-h-[16px]">
-        <p className="text-[11px] text-zinc-600">
-          Paste the sound URL from TikTok — ID extracted automatically
+      <div className="mt-1.5 space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-zinc-600">
+            Paste the sound URL from TikTok — ID extracted automatically
+            {resolvedId && (
+              <span className="ml-1 font-mono text-zinc-500">({resolvedId})</span>
+            )}
+          </p>
           {resolvedId && (
-            <span className="ml-1 font-mono text-zinc-500">({resolvedId})</span>
+            <a
+              href={`https://www.tiktok.com/music/-${resolvedId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-shrink-0 text-[11px] text-blue-400 hover:text-blue-300 underline"
+            >
+              Listen on TikTok ↗
+            </a>
           )}
+        </div>
+        <p className="text-[11px] text-amber-600/80">
+          ⚠ TikTok&apos;s photo post API does not support custom music selection — TikTok will auto-assign a track. You can change the music in the TikTok app after posting.
         </p>
-        {resolvedId && (
-          <a
-            href={`https://www.tiktok.com/music/-${resolvedId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-shrink-0 text-[11px] text-blue-400 hover:text-blue-300 underline"
-          >
-            Listen on TikTok ↗
-          </a>
-        )}
       </div>
     </div>
   );

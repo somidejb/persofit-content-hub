@@ -108,19 +108,18 @@ export async function postPhotoSlideshow({
   const description = [caption, hashtags].filter(Boolean).join("\n\n").slice(0, 2200);
 
   // Only include fields that are documented for photo posts.
-  // disable_duet / disable_stitch are video-only fields and cause invalid_params on photos.
+  // NOTE: TikTok's photo post API does NOT support music_id — the field is
+  // video-only and silently ignored on photo posts. The only audio control
+  // available is auto_add_music, which lets TikTok pick a recommended track.
+  // Users can change the music inside the TikTok app after posting.
+  // Ref: https://developers.tiktok.com/doc/content-posting-api-reference-photo-post
+  void musicId; // retained in DB / UI for future API support; unused in API call
   const postInfo: Record<string, unknown> = {
     title: description,
     privacy_level: "SELF_ONLY",
     disable_comment: false,
+    auto_add_music: true,
   };
-
-  // Use a specific track if provided, otherwise let TikTok auto-select music
-  if (musicId) {
-    postInfo.music_id = musicId;
-  } else {
-    postInfo.auto_add_music = true;
-  }
 
   const initRes = await fetch(TIKTOK_INIT_URL, {
     method: "POST",
@@ -132,7 +131,7 @@ export async function postPhotoSlideshow({
       post_info: postInfo,
       source_info: {
         source: "PULL_FROM_URL",   // Only valid source for photo posts
-        photo_cover_index: 1,      // 1-indexed: 1 = first image
+        photo_cover_index: 0,      // 0-indexed: 0 = first image
         photo_images: imageUrls,   // Array of URL strings — NOT objects
       },
       post_mode: "DIRECT_POST",
