@@ -653,7 +653,7 @@ export default function SlideshowDetailClient({
                       Listen on TikTok ↗
                     </a>
                   )}
-                </p>
+                </div>
               </div>
 
               {editError && (
