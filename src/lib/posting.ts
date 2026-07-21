@@ -1,5 +1,3 @@
-import path from "path";
-import { readFile } from "fs/promises";
 import { prisma } from "./prisma";
 import { postPhotoSlideshow, refreshTikTokToken, TikTokApiError } from "./tiktok";
 
@@ -62,25 +60,28 @@ export async function postSlideshowNow(slideshowId: string) {
   const missing = slideshow.slides.filter((s) => !s.finalImagePath);
   if (missing.length > 0) throw new Error("Not all slides have a finished image with the text overlay baked in yet");
 
-  const imagePaths = slideshow.slides.map((s) => s.finalImagePath as string);
+  const rawPaths = slideshow.slides.map((s) => s.finalImagePath as string);
+
+  // Build public HTTPS URLs for TikTok to pull from.
+  // In production (Vercel) finalImagePath is already a Vercel Blob https:// URL.
+  // In local dev it's a /uploads/... path; we construct a localhost URL as best-effort
+  // (TikTok cannot reach localhost, so posting only fully works in production).
+  const baseUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : (process.env.NEXTAUTH_URL ?? "http://localhost:3000");
+
+  const imageUrls = rawPaths.map((p) =>
+    p.startsWith("http://") || p.startsWith("https://")
+      ? p
+      : `${baseUrl}${p.startsWith("/") ? "" : "/"}${p}`
+  );
 
   try {
     const accessToken = await getValidAccessToken(slideshow.tiktokAccount.id);
 
-    const images = await Promise.all(
-      imagePaths.map(async (p) => {
-        if (p.startsWith("http://") || p.startsWith("https://")) {
-          const res = await fetch(p);
-          if (!res.ok) throw new Error(`Failed to fetch image from blob: ${p}`);
-          return Buffer.from(await res.arrayBuffer());
-        }
-        return readFile(path.join(process.cwd(), "public", p.replace(/^\//, "")));
-      })
-    );
-
     const { publishId } = await postPhotoSlideshow({
       accessToken,
-      images,
+      imageUrls,
       caption: slideshow.caption,
       hashtags: slideshow.hashtags,
       musicId: slideshow.tiktokMusicId ?? undefined,
@@ -91,7 +92,7 @@ export async function postSlideshowNow(slideshowId: string) {
         slideshowId: slideshow.id,
         tiktokAccountId: slideshow.tiktokAccount.id,
         status: "posted",
-        generatedImages: JSON.stringify(imagePaths),
+        generatedImages: JSON.stringify(imageUrls),
       },
     });
     await prisma.slideshow.update({ where: { id: slideshow.id }, data: { status: "POSTED" } });
@@ -105,7 +106,7 @@ export async function postSlideshowNow(slideshowId: string) {
         tiktokAccountId: slideshow.tiktokAccount.id,
         status: "failed",
         errorMessage: message,
-        generatedImages: JSON.stringify(imagePaths),
+        generatedImages: JSON.stringify(imageUrls),
       },
     });
     await prisma.slideshow.update({ where: { id: slideshow.id }, data: { status: "FAILED" } });

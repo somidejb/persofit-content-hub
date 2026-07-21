@@ -81,35 +81,46 @@ export class TikTokApiError extends Error {}
 
 /**
  * Publishes a set of generated slide images as a TikTok photo post via the
- * Content Posting API's FILE_UPLOAD flow: init the post to get per-photo
- * upload URLs, then PUT each image's bytes directly to TikTok.
- * Field names follow TikTok's v2 content posting spec as of this writing —
- * verify against https://developers.tiktok.com/doc/content-posting-api-get-started
- * if TikTok has revised the schema.
+ * Content Posting API's PULL_FROM_URL flow.
+ *
+ * IMPORTANT — Photo posts work differently from video posts:
+ *  - The ONLY valid source for photos is PULL_FROM_URL (FILE_UPLOAD is videos-only).
+ *  - photo_images must be an array of URL *strings*, not objects.
+ *  - TikTok's server fetches the images itself; there is no separate upload step.
+ *  - photo_cover_index is 1-indexed (1 = first image).
+ *
+ * Ref: https://developers.tiktok.com/doc/content-posting-api-get-started
  */
 export async function postPhotoSlideshow({
   accessToken,
-  images,
+  imageUrls,
   caption,
   hashtags,
   musicId,
 }: {
   accessToken: string;
-  images: Buffer[];
+  /** Public HTTPS URLs of the slide images. TikTok pulls them directly. */
+  imageUrls: string[];
   caption: string;
   hashtags: string;
   musicId?: string | null;
 }): Promise<{ publishId: string }> {
   const description = [caption, hashtags].filter(Boolean).join("\n\n").slice(0, 2200);
 
+  // Only include fields that are documented for photo posts.
+  // disable_duet / disable_stitch are video-only fields and cause invalid_params on photos.
   const postInfo: Record<string, unknown> = {
     title: description,
     privacy_level: "SELF_ONLY",
     disable_comment: false,
-    disable_duet: false,
-    disable_stitch: false,
   };
-  if (musicId) postInfo.music_id = musicId;
+
+  // Use a specific track if provided, otherwise let TikTok auto-select music
+  if (musicId) {
+    postInfo.music_id = musicId;
+  } else {
+    postInfo.auto_add_music = true;
+  }
 
   const initRes = await fetch(TIKTOK_INIT_URL, {
     method: "POST",
@@ -120,9 +131,9 @@ export async function postPhotoSlideshow({
     body: JSON.stringify({
       post_info: postInfo,
       source_info: {
-        source: "FILE_UPLOAD",
-        photo_images: images.map((img) => ({ image_size: img.length })),
-        photo_cover_index: 0,
+        source: "PULL_FROM_URL",   // Only valid source for photo posts
+        photo_cover_index: 1,      // 1-indexed: 1 = first image
+        photo_images: imageUrls,   // Array of URL strings — NOT objects
       },
       post_mode: "DIRECT_POST",
       media_type: "PHOTO",
@@ -136,25 +147,13 @@ export async function postPhotoSlideshow({
 
   const initJson = await initRes.json();
   const publishId: string | undefined = initJson?.data?.publish_id;
-  const uploadUrls: string[] = initJson?.data?.upload_urls ?? initJson?.data?.photo_upload_urls ?? [];
 
   if (!publishId) {
-    throw new TikTokApiError("TikTok init response did not include a publish_id");
+    throw new TikTokApiError(
+      `TikTok init succeeded but returned no publish_id. Response: ${JSON.stringify(initJson).slice(0, 300)}`
+    );
   }
 
-  await Promise.all(
-    images.map((imageBuffer, i) => {
-      const uploadUrl = uploadUrls[i];
-      if (!uploadUrl) return Promise.resolve();
-      return fetch(uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": "image/jpeg" },
-        body: new Uint8Array(imageBuffer),
-      }).then((res) => {
-        if (!res.ok) throw new TikTokApiError(`Failed to upload photo ${i + 1} to TikTok`);
-      });
-    })
-  );
-
+  // No upload step needed — TikTok pulls images directly from the provided URLs.
   return { publishId };
 }
