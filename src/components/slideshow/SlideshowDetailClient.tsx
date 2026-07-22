@@ -87,6 +87,24 @@ export default function SlideshowDetailClient({
   // Lightbox state
   const [lightbox, setLightbox] = useState<{ src: string; index: number } | null>(null);
 
+  // On mount: reset any zombie slides that are stuck in "generating" from a
+  // previous session. On a fresh page load React state is always empty, so any
+  // slide with status "generating" in the DB has no live fetch behind it.
+  useEffect(() => {
+    const zombies = slideshow.slides.filter((s) => s.status === "generating");
+    if (zombies.length === 0) return;
+
+    // Optimistically reset in local state immediately so the UI is responsive
+    setSlides((prev) =>
+      prev.map((s) => (s.status === "generating" ? { ...s, status: "draft", errorMessage: null } : s))
+    );
+    if (slideshow.status === "GENERATING") setStatus("DRAFT");
+
+    // Clean up DB in the background
+    fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs only once on mount
+
   useEffect(() => {
     if (!lightbox) return;
     function onKey(e: KeyboardEvent) {
@@ -306,7 +324,22 @@ export default function SlideshowDetailClient({
   }
 
   function handleCancelSlide(slideId: string) {
-    slideAbortRefs.current.get(slideId)?.abort();
+    const ctrl = slideAbortRefs.current.get(slideId);
+    if (ctrl) {
+      // Active fetch in this session — abort it (the catch block resets state)
+      ctrl.abort();
+    } else {
+      // Zombie slide: no active fetch, just reset locally and clean up DB
+      setSlides((prev) =>
+        prev.map((s) => (s.id === slideId ? { ...s, status: "draft", errorMessage: null } : s))
+      );
+      setIndividuallyGenerating((prev) => {
+        const next = new Set(prev);
+        next.delete(slideId);
+        return next;
+      });
+      fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
+    }
   }
 
   async function handleSaveEdit() {
