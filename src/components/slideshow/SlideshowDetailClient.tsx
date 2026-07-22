@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn, GripVertical } from "lucide-react";
+import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn, GripVertical, StopCircle } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -44,6 +44,11 @@ export default function SlideshowDetailClient({
   const [postResult, setPostResult] = useState<{ ok: true; publishId: string } | { ok: false; error: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [individuallyGenerating, setIndividuallyGenerating] = useState<Set<string>>(new Set());
+  // Per-slide abort controllers keyed by slideId
+  const slideAbortRefs = useRef<Map<string, AbortController>>(new Map());
+  // Abort controller for generate-all stream
+  const generateAllAbortRef = useRef<AbortController | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   // DnD sensors — require 8px movement before activating so click handlers still fire
   const sensors = useSensors(
@@ -122,10 +127,17 @@ export default function SlideshowDetailClient({
     setGenerating(true);
     setStatus("GENERATING");
 
+    const abort = new AbortController();
+    generateAllAbortRef.current = abort;
+
     let completedNormally = false;
+    let wasCancelled = false;
 
     try {
-      const res = await fetch(`/api/slideshows/${slideshow.id}/generate`, { method: "POST" });
+      const res = await fetch(`/api/slideshows/${slideshow.id}/generate`, {
+        method: "POST",
+        signal: abort.signal,
+      });
       if (!res.ok || !res.body) {
         const body = await res.json().catch(() => ({}));
         throw new Error((body as { error?: string }).error || "Generation request failed");
@@ -189,12 +201,27 @@ export default function SlideshowDetailClient({
         }
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Generation failed");
-      setStatus("FAILED");
+      if (err instanceof Error && err.name === "AbortError") {
+        wasCancelled = true;
+        completedNormally = true; // don't overwrite status below
+      } else {
+        setActionError(err instanceof Error ? err.message : "Generation failed");
+        setStatus("FAILED");
+      }
     } finally {
-      // Always stop the spinner — even if the complete event was lost
+      generateAllAbortRef.current = null;
       setGenerating(false);
-      if (!completedNormally) {
+      setCancelling(false);
+
+      if (wasCancelled) {
+        // Reset any locally-stuck slides immediately; API call cleans up DB
+        setSlides((prev) =>
+          prev.map((s) => (s.status === "generating" ? { ...s, status: "draft", errorMessage: null } : s))
+        );
+        setStatus("DRAFT");
+        // Fire-and-forget DB cleanup
+        fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
+      } else if (!completedNormally) {
         // Stream closed without a complete event — derive status from slide results
         setSlides((prev) => {
           const anyFailed = prev.some((s) => s.status === "failed");
@@ -203,6 +230,12 @@ export default function SlideshowDetailClient({
         });
       }
     }
+  }
+
+  async function handleCancelGeneration() {
+    setCancelling(true);
+    generateAllAbortRef.current?.abort();
+    // The finally block in handleGenerateAll handles cleanup
   }
 
   async function handlePostNow() {
@@ -227,10 +260,18 @@ export default function SlideshowDetailClient({
   }
 
   async function handleGenerateSlide(slideId: string) {
+    // Cancel any existing generation for this slide first
+    slideAbortRefs.current.get(slideId)?.abort();
+    const abort = new AbortController();
+    slideAbortRefs.current.set(slideId, abort);
+
     setIndividuallyGenerating((prev) => new Set(prev).add(slideId));
     setSlides((prev) => prev.map((s) => (s.id === slideId ? { ...s, status: "generating", errorMessage: null } : s)));
     try {
-      const res = await fetch(`/api/slideshows/${slideshow.id}/slides/${slideId}/generate`, { method: "POST" });
+      const res = await fetch(`/api/slideshows/${slideshow.id}/slides/${slideId}/generate`, {
+        method: "POST",
+        signal: abort.signal,
+      });
       const body = await res.json();
       if (!res.ok) {
         setSlides((prev) =>
@@ -243,13 +284,29 @@ export default function SlideshowDetailClient({
           )
         );
       }
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        // User cancelled — reset slide to draft
+        setSlides((prev) =>
+          prev.map((s) => (s.id === slideId ? { ...s, status: "draft", errorMessage: null } : s))
+        );
+      } else {
+        setSlides((prev) =>
+          prev.map((s) => (s.id === slideId ? { ...s, status: "failed", errorMessage: err instanceof Error ? err.message : "Failed" } : s))
+        );
+      }
     } finally {
+      slideAbortRefs.current.delete(slideId);
       setIndividuallyGenerating((prev) => {
         const next = new Set(prev);
         next.delete(slideId);
         return next;
       });
     }
+  }
+
+  function handleCancelSlide(slideId: string) {
+    slideAbortRefs.current.get(slideId)?.abort();
   }
 
   async function handleSaveEdit() {
@@ -314,12 +371,25 @@ export default function SlideshowDetailClient({
           </div>
         </div>
         <div className="flex flex-shrink-0 flex-wrap gap-2">
-          <button onClick={() => setEditing(true)} className="btn-secondary">
+          <button onClick={() => setEditing(true)} disabled={generating} className="btn-secondary">
             <Pencil size={15} /> Edit
           </button>
-          <button onClick={handleGenerateAll} disabled={generating} className="btn-primary">
-            <Sparkles size={15} /> {generating ? "Generating…" : "Generate All"}
-          </button>
+          {generating ? (
+            <button
+              onClick={handleCancelGeneration}
+              disabled={cancelling}
+              className="btn-danger flex items-center gap-1.5"
+            >
+              {cancelling
+                ? <Loader2 size={15} className="animate-spin" />
+                : <StopCircle size={15} />}
+              {cancelling ? "Stopping…" : "Stop"}
+            </button>
+          ) : (
+            <button onClick={handleGenerateAll} className="btn-primary">
+              <Sparkles size={15} /> Generate All
+            </button>
+          )}
           <button
             onClick={handlePostNow}
             disabled={posting || !allGenerated || !slideshow.tiktokAccountId}
@@ -395,7 +465,19 @@ export default function SlideshowDetailClient({
               <Loader2 size={12} className="animate-spin text-neon" />
               Generating slides…
             </span>
-            <span className="tabular-nums">{doneCount} / {slides.length} done</span>
+            <div className="flex items-center gap-3">
+              <span className="tabular-nums">{doneCount} / {slides.length} done</span>
+              {generating && (
+                <button
+                  onClick={handleCancelGeneration}
+                  disabled={cancelling}
+                  className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-50 transition"
+                >
+                  {cancelling ? <Loader2 size={10} className="animate-spin" /> : <StopCircle size={10} />}
+                  {cancelling ? "Stopping…" : "Stop"}
+                </button>
+              )}
+            </div>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-surface-300">
             <div className="h-full rounded-full bg-neon transition-all duration-500" style={{ width: `${progressPct}%` }} />
@@ -433,6 +515,7 @@ export default function SlideshowDetailClient({
                   generating={generating}
                   onZoom={(src, idx) => setLightbox({ src, index: idx })}
                   onGenerate={handleGenerateSlide}
+                  onCancelGenerate={handleCancelSlide}
                 />
               ))}
             </div>
@@ -665,6 +748,7 @@ interface SortableSlideCardProps {
   generating: boolean;
   onZoom: (src: string, index: number) => void;
   onGenerate: (id: string) => void;
+  onCancelGenerate: (id: string) => void;
 }
 
 function SortableSlideCard({
@@ -674,6 +758,7 @@ function SortableSlideCard({
   generating,
   onZoom,
   onGenerate,
+  onCancelGenerate,
 }: SortableSlideCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: slide.id,
@@ -744,18 +829,24 @@ function SortableSlideCard({
               <Download size={13} />
             </a>
           )}
-          <button
-            onClick={() => onGenerate(slide.id)}
-            disabled={isGeneratingThis || generating}
-            title={slide.status === "done" ? "Regenerate this slide" : "Generate this slide"}
-            className="text-zinc-500 hover:text-neon disabled:opacity-40"
-          >
-            {isGeneratingThis ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
+          {isGeneratingThis ? (
+            <button
+              onClick={() => onCancelGenerate(slide.id)}
+              title="Stop generating this slide"
+              className="text-red-400 hover:text-red-300 transition"
+            >
+              <StopCircle size={13} />
+            </button>
+          ) : (
+            <button
+              onClick={() => onGenerate(slide.id)}
+              disabled={generating}
+              title={slide.status === "done" ? "Regenerate this slide" : "Generate this slide"}
+              className="text-zinc-500 hover:text-neon disabled:opacity-40 transition"
+            >
               <RefreshCw size={13} />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
       {slide.status === "failed" && slide.errorMessage && (
