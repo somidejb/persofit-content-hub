@@ -2,8 +2,8 @@
 const nextConfig = {
   experimental: {
     instrumentationHook: true,
+    serverComponentsExternalPackages: ["@prisma/client", "prisma"],
   },
-  serverExternalPackages: ["@prisma/client", "prisma"],
 };
 
 export default nextConfig;

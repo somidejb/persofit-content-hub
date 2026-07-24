@@ -11,7 +11,7 @@ import {
   Trash2,
   Sparkles,
   Bot,
-  Image,
+  Image as ImageIcon,
   Shuffle,
   Link,
 } from "lucide-react";
@@ -490,9 +490,9 @@ export default function TemplateSlideEditor({
                     {previewLoading ? (
                       <><Loader2 size={12} className="animate-spin" /> Generating…</>
                     ) : previewUrl ? (
-                      <><Image size={12} /> Regenerate preview</>
+                      <><ImageIcon size={12} /> Regenerate preview</>
                     ) : (
-                      <><Image size={12} /> Generate live preview</>
+                      <><ImageIcon size={12} /> Generate live preview</>
                     )}
                   </button>
                 )}

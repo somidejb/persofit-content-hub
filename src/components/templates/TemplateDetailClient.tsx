@@ -100,6 +100,7 @@ export default function TemplateDetailClient({
   const [editing, setEditing] = useState(false);
 
   // Sync when server refreshes data (router.refresh() re-runs the server component)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     setTemplate(initial);
   }, [initial.updatedAt]);

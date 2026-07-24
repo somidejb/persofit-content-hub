@@ -52,7 +52,7 @@ export async function GET(
 
   const filename = `slide_${String(slide.order).padStart(2, "0")}.jpg`;
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "image/jpeg",
       "Content-Disposition": `attachment; filename="${filename}"`,
