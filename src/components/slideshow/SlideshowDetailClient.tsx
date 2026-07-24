@@ -544,6 +544,7 @@ export default function SlideshowDetailClient({
                   key={slide.id}
                   slide={slide}
                   index={i}
+                  slideshowId={slideshow.id}
                   isGeneratingThis={individuallyGenerating.has(slide.id) || slide.status === "generating"}
                   generating={generating}
                   onZoom={(src, idx) => setLightbox({ src, index: idx })}
@@ -624,8 +625,8 @@ export default function SlideshowDetailClient({
               </span>
               <div className="flex items-center gap-2">
                 <a
-                  href={lightbox.src}
-                  download={`slide-${lightbox.index + 1}.jpg`}
+                  href={`/api/slideshows/${slideshow.id}/slides/${slides[lightbox.index]?.id}/download`}
+                  download={`slide_${String(lightbox.index + 1).padStart(2, "0")}.jpg`}
                   onClick={(e) => e.stopPropagation()}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:text-white transition"
                 >
@@ -777,6 +778,7 @@ type SlideItem = MockSlideshow["slides"][number];
 interface SortableSlideCardProps {
   slide: SlideItem;
   index: number;
+  slideshowId: string;
   isGeneratingThis: boolean;
   generating: boolean;
   onZoom: (src: string, index: number) => void;
@@ -787,6 +789,7 @@ interface SortableSlideCardProps {
 function SortableSlideCard({
   slide,
   index,
+  slideshowId,
   isGeneratingThis,
   generating,
   onZoom,
@@ -854,8 +857,8 @@ function SortableSlideCard({
         <div className="flex items-center gap-1.5">
           {slide.finalImagePath && (
             <a
-              href={slide.finalImagePath}
-              download={`slide-${index + 1}.jpg`}
+              href={`/api/slideshows/${slideshowId}/slides/${slide.id}/download`}
+              download={`slide_${String(index + 1).padStart(2, "0")}.jpg`}
               title="Download this slide"
               className="text-zinc-500 hover:text-neon transition"
             >

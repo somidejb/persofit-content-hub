@@ -1,8 +1,6 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import { writeFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { generateSlideImage } from "@/lib/openaiImageService";
@@ -38,9 +36,23 @@ export async function POST(req: NextRequest) {
     });
 
     const filename = `preview-${randomUUID()}.jpg`;
-    const destPath = path.join(process.cwd(), "public", "uploads", "generated", filename);
-    await writeFile(destPath, imageBuffer);
 
+    // Production (Vercel): write to Blob storage — the local filesystem is read-only.
+    // Development: fall back to public/uploads/generated/ so local preview works without Blob.
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      const { put } = await import("@vercel/blob");
+      const blob = await put(`generated/${filename}`, imageBuffer, {
+        access: "public",
+        contentType: "image/jpeg",
+      });
+      return NextResponse.json({ imagePath: blob.url });
+    }
+
+    // Local dev fallback
+    const path = await import("path");
+    const { writeFile } = await import("fs/promises");
+    const destPath = path.default.join(process.cwd(), "public", "uploads", "generated", filename);
+    await writeFile(destPath, imageBuffer);
     return NextResponse.json({ imagePath: `/uploads/generated/${filename}` });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Generation failed";
