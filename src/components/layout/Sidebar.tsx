@@ -10,7 +10,6 @@ import {
   History,
   Users,
   Settings,
-  Zap,
   LayoutTemplate,
   X,
 } from "lucide-react";
@@ -64,8 +63,9 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
       {/* Header row: logo + mobile close button */}
       <div className="mb-8 flex items-center justify-between px-2">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-neon/10 text-neon shadow-neon-sm">
-            <Zap size={18} strokeWidth={2.5} />
+          <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-persofit.png" alt="Persofit" className="h-full w-full object-contain" />
           </div>
           <div>
             <p className="text-sm font-bold leading-tight text-white">Persofit</p>
