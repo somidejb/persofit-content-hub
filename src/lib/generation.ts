@@ -71,17 +71,16 @@ async function generateOneSlide(
     if (validPool.length === 0) throw new Error("Slide has no images in its pool");
 
     const picked = validPool[Math.floor(Math.random() * validPool.length)];
-    const absPath = path.join(process.cwd(), "public", picked.replace(/^\//, ""));
     let rawBuffer: Buffer;
-    try {
+    if (picked.startsWith("http://") || picked.startsWith("https://")) {
+      // Production: pool image is a remote Vercel Blob URL — fetch it
+      const res = await fetch(picked);
+      if (!res.ok) throw new Error(`Failed to fetch pool image (${res.status}): ${picked}`);
+      rawBuffer = Buffer.from(await res.arrayBuffer());
+    } else {
+      // Development: pool image is a local path under /public
+      const absPath = path.join(process.cwd(), "public", picked.replace(/^\//, ""));
       rawBuffer = await readFile(absPath);
-    } catch {
-      // Pool image missing on this server (e.g. fresh deployment) — fall back to text-to-image
-      console.warn(`[generation] Pool image not found on disk: ${picked} — falling back to text-to-image`);
-      const apiKey = resolveOpenAIApiKey(settings);
-      if (!apiKey) throw new Error("OpenAI API key is not configured and pool image is unavailable.");
-      const prompt = buildFinalPrompt({ customPrompt: slide.customPrompt, variationDirection: slide.variationDirection, siblingIndex, siblingTotal });
-      rawBuffer = await generateSlideImage({ apiKey, model: settings.imageModel, quality: settings.imageQuality, referenceImagePath: null, prompt, outputWidth: slideshow.outputWidth, outputHeight: slideshow.outputHeight });
     }
     const generatedImagePath = await saveBuffer(rawBuffer);
 
