@@ -11,6 +11,10 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Persofit Content Hub",
   description: "AI-generated TikTok slideshow content, scheduled and posted automatically.",
+  icons: {
+    icon: "/logo-persofit.png",
+    apple: "/logo-persofit.png",
+  },
 };
 
 export const viewport: Viewport = {
