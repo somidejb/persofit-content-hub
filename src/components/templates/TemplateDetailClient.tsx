@@ -636,7 +636,7 @@ export default function TemplateDetailClient({
                       {style.label}
                     </span>
                     {run.errorMessage && (
-                      <span className="text-xs text-red-400 truncate">{run.errorMessage}</span>
+                      <span className="text-xs text-red-400 truncate" title={run.errorMessage}>{run.errorMessage}</span>
                     )}
                   </div>
                   {run.slideshowId && run.status !== "REJECTED" && (

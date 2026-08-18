@@ -2,9 +2,16 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle } from "lucide-react";
+import Link from "next/link";
+import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle, ExternalLink, RefreshCw } from "lucide-react";
 
-type RunSummary = { status: string; scheduledFor: string; errorMessage: string | null };
+type RunSummary = {
+  status: string;
+  scheduledFor: string;
+  errorMessage: string | null;
+  slideshowId: string | null;
+  slideshowStatus?: string | null;
+};
 type TemplateSummary = { id: string; name: string; active: boolean; runs: RunSummary[] };
 
 type RunAllResult = {
@@ -12,6 +19,9 @@ type RunAllResult = {
   name: string;
   status: "running" | "done" | "failed";
   message?: string;
+  slideshowId?: string | null;
+  doneSlides?: number;
+  totalSlides?: number;
 };
 
 function todayIso() {
@@ -27,14 +37,35 @@ function todayIso() {
 function summarizeTemplateToday(t: TemplateSummary, today: string): RunAllResult | null {
   const todays = t.runs.filter((r) => r.scheduledFor === today);
   if (todays.length === 0) return null;
-  if (todays.some((r) => r.status === "GENERATING")) {
-    return { id: t.id, name: t.name, status: "running" };
+
+  // A run can sit at status "GENERATING" for a few extra seconds after every
+  // slide is already done, while it wraps up (marks AWAITING_APPROVAL, or
+  // finishes auto-posting to TikTok). Treat it as still-generating only if
+  // the underlying slideshow itself hasn't finished either — otherwise the
+  // panel looks stuck even though the images are visibly complete.
+  const isActuallyGenerating = (r: RunSummary) =>
+    r.status === "GENERATING" && (r.slideshowStatus == null || r.slideshowStatus === "GENERATING");
+
+  const generatingRun = todays.find(isActuallyGenerating);
+  if (generatingRun) {
+    return { id: t.id, name: t.name, status: "running", slideshowId: generatingRun.slideshowId };
   }
-  if (todays.every((r) => r.status === "POSTED" || r.status === "AWAITING_APPROVAL")) {
-    return { id: t.id, name: t.name, status: "done" };
+
+  const failedRun = todays.find(
+    (r) => r.status === "FAILED" || r.status === "REJECTED" || r.slideshowStatus === "FAILED"
+  );
+  if (failedRun) {
+    return {
+      id: t.id,
+      name: t.name,
+      status: "failed",
+      message: failedRun.errorMessage ?? undefined,
+      slideshowId: failedRun.slideshowId ?? null,
+    };
   }
-  const failedRun = todays.find((r) => r.status === "FAILED" || r.status === "REJECTED");
-  return { id: t.id, name: t.name, status: "failed", message: failedRun?.errorMessage ?? undefined };
+
+  const latest = todays[0];
+  return { id: t.id, name: t.name, status: "done", slideshowId: latest?.slideshowId ?? null };
 }
 
 async function fetchTemplates(): Promise<TemplateSummary[]> {
@@ -43,8 +74,16 @@ async function fetchTemplates(): Promise<TemplateSummary[]> {
   return Array.isArray(templates) ? templates : [];
 }
 
-/** Reads a run-now SSE stream to completion and reports whether it errored. */
-async function runTemplateAndSummarize(templateId: string): Promise<{ ok: boolean; message?: string }> {
+/**
+ * Reads a run-now SSE stream live, reporting incremental progress (as soon as
+ * the slideshow exists, and as each slide finishes) via onUpdate — this is
+ * what lets the "View" link appear and the slide count tick up in real time,
+ * instead of only after the whole run finishes.
+ */
+async function runTemplateLive(
+  templateId: string,
+  onUpdate: (patch: Partial<RunAllResult>) => void
+): Promise<{ ok: boolean; message?: string }> {
   try {
     const res = await fetch(`/api/templates/${templateId}/run-now`, { method: "POST" });
     if (!res.ok || !res.body) {
@@ -56,6 +95,7 @@ async function runTemplateAndSummarize(templateId: string): Promise<{ ok: boolea
     const decoder = new TextDecoder();
     let buffer = "";
     let sawError: string | null = null;
+    let doneSlides = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -68,7 +108,18 @@ async function runTemplateAndSummarize(templateId: string): Promise<{ ok: boolea
         if (!line.startsWith("data: ")) continue;
         try {
           const event = JSON.parse(line.slice(6));
-          if (event.type === "error") sawError = event.message;
+          if (event.type === "error") {
+            sawError = event.message;
+          } else if (event.type === "slideshow_created") {
+            const totalSlides = Array.isArray(event.slides) ? event.slides.length : undefined;
+            doneSlides = 0;
+            onUpdate({ slideshowId: event.slideshowId ?? null, doneSlides, totalSlides });
+          } else if (event.type === "slide_done" || event.type === "slide_failed") {
+            doneSlides += 1;
+            onUpdate({ doneSlides });
+          } else if (event.type === "account_complete") {
+            if (event.slideshowId) onUpdate({ slideshowId: event.slideshowId });
+          }
         } catch {
           // ignore malformed line
         }
@@ -90,6 +141,7 @@ export default function MasterGenerationControls() {
   const [runningAll, setRunningAll] = useState(false);
   const [runAllResults, setRunAllResults] = useState<RunAllResult[]>([]);
   const [runAllError, setRunAllError] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const reconcile = useCallback(async () => {
@@ -171,20 +223,43 @@ export default function MasterGenerationControls() {
 
       setRunAllResults(active.map((t) => ({ id: t.id, name: t.name, status: "running" })));
 
-      await Promise.all(
-        active.map(async (t) => {
-          const result = await runTemplateAndSummarize(t.id);
-          setRunAllResults((prev) =>
-            prev.map((r) => (r.id === t.id ? { ...r, status: result.ok ? "done" : "failed", message: result.message } : r))
-          );
-        })
-      );
+      await Promise.all(active.map((t) => runOneTemplate(t.id, t.name)));
       await reconcile();
       router.refresh();
     } catch (err) {
       setRunAllError(err instanceof Error ? err.message : "Failed to run templates");
     } finally {
       setRunningAll(false);
+    }
+  }
+
+  async function runOneTemplate(id: string, name: string) {
+    setRunAllResults((prev) => {
+      const exists = prev.some((r) => r.id === id);
+      if (exists) {
+        return prev.map((r) =>
+          r.id === id ? { ...r, status: "running", message: undefined, doneSlides: undefined, totalSlides: undefined } : r
+        );
+      }
+      return [...prev, { id, name, status: "running" }];
+    });
+
+    const result = await runTemplateLive(id, (patch) => {
+      setRunAllResults((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    });
+
+    setRunAllResults((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: result.ok ? "done" : "failed", message: result.message } : r))
+    );
+  }
+
+  async function handleRetry(id: string, name: string) {
+    setRetryingId(id);
+    try {
+      await runOneTemplate(id, name);
+      router.refresh();
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -216,17 +291,52 @@ export default function MasterGenerationControls() {
         <div className="w-full rounded-lg border border-surface-border bg-surface-200 p-3">
           {runAllError && <p className="text-xs text-red-400">{runAllError}</p>}
           {runAllResults.length > 0 && (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               {runAllResults.map((r) => (
-                <div key={r.id} className="flex items-center justify-between gap-3 text-xs">
-                  <span className="flex items-center gap-1.5 text-zinc-300">
-                    {r.status === "running" && <Loader2 size={12} className="animate-spin text-neon" />}
-                    {r.status === "done" && <CheckCircle2 size={12} className="text-neon" />}
-                    {r.status === "failed" && <XCircle size={12} className="text-red-400" />}
-                    {r.name}
-                  </span>
+                <div key={r.id} className="flex flex-col gap-1 border-b border-surface-border pb-2 last:border-0 last:pb-0">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="flex items-center gap-1.5 text-zinc-300">
+                      {r.status === "running" && <Loader2 size={12} className="animate-spin text-neon" />}
+                      {r.status === "done" && <CheckCircle2 size={12} className="text-neon" />}
+                      {r.status === "failed" && <XCircle size={12} className="text-red-400" />}
+                      {r.name}
+                      {r.status === "running" && (
+                        <span className="text-zinc-500">
+                          {typeof r.totalSlides === "number"
+                            ? `— ${r.doneSlides ?? 0}/${r.totalSlides} slides`
+                            : "— planning…"}
+                        </span>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-3 shrink-0">
+                      {r.slideshowId && (
+                        <Link
+                          href={`/slideshows/${r.slideshowId}`}
+                          className={`flex items-center gap-1 transition ${
+                            r.status === "running" ? "text-neon hover:text-neon/80" : "text-zinc-500 hover:text-neon"
+                          }`}
+                        >
+                          {r.status === "running" ? "Watch live" : "View"} <ExternalLink size={11} />
+                        </Link>
+                      )}
+                      {r.status === "failed" && (
+                        <button
+                          onClick={() => handleRetry(r.id, r.name)}
+                          disabled={retryingId === r.id}
+                          className="flex items-center gap-1 text-zinc-500 hover:text-neon disabled:opacity-40 transition"
+                        >
+                          {retryingId === r.id ? (
+                            <Loader2 size={11} className="animate-spin" />
+                          ) : (
+                            <RefreshCw size={11} />
+                          )}
+                          Retry
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   {r.status === "failed" && r.message && (
-                    <span className="truncate text-red-400" title={r.message}>{r.message}</span>
+                    <p className="text-[11px] text-red-400/90">{r.message}</p>
                   )}
                 </div>
               ))}

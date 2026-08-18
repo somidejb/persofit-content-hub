@@ -369,7 +369,17 @@ async function executeTemplateRun(
     }
   });
 
-  if (failed) throw new Error("One or more slides failed to generate");
+  if (failed) {
+    const failedSlides = await prisma.slide.findMany({
+      where: { slideshowId: createdSlideshow.id, status: "failed" },
+      select: { order: true, errorMessage: true },
+      orderBy: { order: "asc" },
+    });
+    const detail = failedSlides
+      .map((s) => `Slide ${s.order}: ${s.errorMessage ?? "unknown error"}`)
+      .join(" | ");
+    throw new Error(`${failedSlides.length} slide(s) failed to generate — ${detail}`);
+  }
 
   if (template.autoPost) {
     await postSlideshowNow(createdSlideshow.id);
@@ -447,9 +457,15 @@ export async function runTemplateNow(
         where: { id: run.id },
         data: { status: "FAILED", errorMessage: message },
       });
+      // executeTemplateRun may have already created (and linked) a slideshow
+      // before the failure — re-read the row so a partially-generated
+      // slideshow is still reachable for diagnosis/regeneration instead of
+      // silently reporting no slideshow at all.
+      const updated = await prisma.slideshowTemplateRun.findUnique({ where: { id: run.id } });
+      const slideshowId = updated?.slideshowId ?? null;
       await onProgress?.({ type: "error", message, accountId, accountName });
-      results.push({ accountId, accountName, runId: run.id, slideshowId: null, status: "FAILED" });
-      await onProgress?.({ type: "account_complete", accountId, accountName, status: "FAILED", slideshowId: null });
+      results.push({ accountId, accountName, runId: run.id, slideshowId, status: "FAILED" });
+      await onProgress?.({ type: "account_complete", accountId, accountName, status: "FAILED", slideshowId });
     }
   }
 

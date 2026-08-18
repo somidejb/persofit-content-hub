@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { toAccount } from "@/lib/adapters";
 import SettingsClient from "@/components/settings/SettingsClient";
+import StorageCleanup from "@/components/settings/StorageCleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -17,17 +18,22 @@ export default async function SettingsPage() {
   ]);
 
   return (
-    <SettingsClient
-      maskedKey={maskKey(settings?.openaiApiKey ?? null)}
-      hasKey={!!settings?.openaiApiKey}
-      initialImageModel={settings?.imageModel ?? "gpt-image-2"}
-      initialImageQuality={settings?.imageQuality ?? "medium"}
-      initialDefaultAspectRatio={settings?.defaultAspectRatio ?? "9:16"}
-      initialDefaultOutputWidth={settings?.defaultOutputWidth ?? 1080}
-      initialDefaultOutputHeight={settings?.defaultOutputHeight ?? 1920}
-      accounts={accounts.map(toAccount)}
-      initialTiktokClientKey={settings?.tiktokClientKey ?? null}
-      initialTiktokRedirectUri={settings?.tiktokRedirectUri ?? null}
-    />
+    <>
+      <SettingsClient
+        maskedKey={maskKey(settings?.openaiApiKey ?? null)}
+        hasKey={!!settings?.openaiApiKey}
+        initialImageModel={settings?.imageModel ?? "gpt-image-2"}
+        initialImageQuality={settings?.imageQuality ?? "medium"}
+        initialDefaultAspectRatio={settings?.defaultAspectRatio ?? "9:16"}
+        initialDefaultOutputWidth={settings?.defaultOutputWidth ?? 1080}
+        initialDefaultOutputHeight={settings?.defaultOutputHeight ?? 1920}
+        accounts={accounts.map(toAccount)}
+        initialTiktokClientKey={settings?.tiktokClientKey ?? null}
+        initialTiktokRedirectUri={settings?.tiktokRedirectUri ?? null}
+      />
+      <div className="mt-6 max-w-2xl">
+        <StorageCleanup />
+      </div>
+    </>
   );
 }

@@ -92,8 +92,14 @@ export default function SlideshowDetailClient({
 
   // On mount: reset any zombie slides that are stuck in "generating" from a
   // previous session. On a fresh page load React state is always empty, so any
-  // slide with status "generating" in the DB has no live fetch behind it.
+  // slide with status "generating" in the DB normally has no live fetch behind
+  // it — UNLESS the slideshow's own status is still GENERATING, which now
+  // legitimately means some OTHER process (a template run, another tab) is
+  // actively working on it right now. In that case, leave it alone — the live
+  // polling effect below will pick it up rather than us prematurely killing it.
   useEffect(() => {
+    if (slideshow.status === "GENERATING") return;
+
     const zombies = slideshow.slides.filter((s) => s.status === "generating");
     if (zombies.length === 0) return;
 
@@ -101,12 +107,45 @@ export default function SlideshowDetailClient({
     setSlides((prev) =>
       prev.map((s) => (s.status === "generating" ? { ...s, status: "draft", errorMessage: null } : s))
     );
-    if (slideshow.status === "GENERATING") setStatus("DRAFT");
 
     // Clean up DB in the background
     fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs only once on mount
+
+  // Live-watch: while the slideshow is GENERATING and it's not this tab doing
+  // it (generating === false), poll the server so slide thumbnails/statuses
+  // update in real time — this is what makes "click through to watch it
+  // generate" actually show live progress when a template run (or another
+  // tab) is the one driving it.
+  const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reconcileFromServer = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/slideshows/${slideshow.id}`);
+      if (!res.ok) return;
+      const fresh: MockSlideshow = await res.json();
+      setSlides(fresh.slides);
+      setStatus(fresh.status);
+    } catch {
+      // transient — next poll tick will retry
+    }
+  }, [slideshow.id]);
+
+  useEffect(() => {
+    const watchingElsewhere = !generating && status === "GENERATING";
+    if (watchingElsewhere && !livePollRef.current) {
+      livePollRef.current = setInterval(reconcileFromServer, 3000);
+    } else if (!watchingElsewhere && livePollRef.current) {
+      clearInterval(livePollRef.current);
+      livePollRef.current = null;
+    }
+    return () => {
+      if (livePollRef.current) {
+        clearInterval(livePollRef.current);
+        livePollRef.current = null;
+      }
+    };
+  }, [generating, status, reconcileFromServer]);
 
   useEffect(() => {
     if (!lightbox) return;

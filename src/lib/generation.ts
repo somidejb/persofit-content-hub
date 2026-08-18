@@ -8,6 +8,7 @@ import { generateSlideImage } from "./openaiImageService";
 import { buildFinalPrompt } from "./prompt-builder";
 import { normalizeToOutputSize } from "./image-processing";
 import { renderTextOverlay } from "./overlay-renderer";
+import { deleteStoredImages } from "./blob-storage";
 
 type ProgressEvent =
   | { type: "slide_start"; slideId: string }
@@ -56,6 +57,26 @@ function buildSiblingMap(slides: Slide[]): Map<string, { index: number; total: n
   return result;
 }
 
+/**
+ * Only finalImagePath is ever displayed or posted — generatedImagePath and
+ * processedImagePath are pure intermediates. Once a fresh finalImagePath
+ * exists, delete: (a) this attempt's now-redundant raw/processed images,
+ * and (b) whatever the slide's PREVIOUS attempt left behind (regenerating a
+ * slide otherwise leaks its old images every time).
+ */
+async function cleanUpSuperseded(
+  oldPaths: (string | null)[],
+  thisAttempt: { generatedImagePath: string; processedImagePath: string; finalImagePath: string }
+): Promise<void> {
+  const toDelete = new Set<string>();
+  for (const p of oldPaths) if (p) toDelete.add(p);
+  if (thisAttempt.generatedImagePath !== thisAttempt.finalImagePath) toDelete.add(thisAttempt.generatedImagePath);
+  if (thisAttempt.processedImagePath !== thisAttempt.finalImagePath) toDelete.add(thisAttempt.processedImagePath);
+  toDelete.delete(thisAttempt.finalImagePath);
+
+  await deleteStoredImages(Array.from(toDelete));
+}
+
 async function generateOneSlide(
   slideshow: Pick<Slideshow, "outputWidth" | "outputHeight">,
   slide: Slide,
@@ -63,6 +84,10 @@ async function generateOneSlide(
   siblingIndex?: number,
   siblingTotal?: number
 ): Promise<{ finalImagePath: string }> {
+  // Whatever this slide had from a previous attempt — cleaned up once the
+  // new attempt succeeds, so regenerating doesn't leak the old images.
+  const oldPaths = [slide.generatedImagePath, slide.processedImagePath, slide.finalImagePath];
+
   // ── Random-pick mode: skip OpenAI, just pick a file from the pool ──
   if (slide.imageMode === "random-pick") {
     let pool: string[] = [];
@@ -92,8 +117,17 @@ async function generateOneSlide(
 
     await prisma.slide.update({
       where: { id: slide.id },
-      data: { status: "done", generatedImagePath, processedImagePath, finalImagePath, errorMessage: null },
+      data: {
+        status: "done",
+        // Redundant intermediates get their blob deleted below — don't keep
+        // a dead URL pointing at nothing in the database.
+        generatedImagePath: generatedImagePath === finalImagePath ? generatedImagePath : null,
+        processedImagePath: processedImagePath === finalImagePath ? processedImagePath : null,
+        finalImagePath,
+        errorMessage: null,
+      },
     });
+    await cleanUpSuperseded(oldPaths, { generatedImagePath, processedImagePath, finalImagePath });
     return { finalImagePath };
   }
 
@@ -130,8 +164,15 @@ async function generateOneSlide(
 
   await prisma.slide.update({
     where: { id: slide.id },
-    data: { status: "done", generatedImagePath, processedImagePath, finalImagePath, errorMessage: null },
+    data: {
+      status: "done",
+      generatedImagePath: generatedImagePath === finalImagePath ? generatedImagePath : null,
+      processedImagePath: processedImagePath === finalImagePath ? processedImagePath : null,
+      finalImagePath,
+      errorMessage: null,
+    },
   });
+  await cleanUpSuperseded(oldPaths, { generatedImagePath, processedImagePath, finalImagePath });
 
   return { finalImagePath };
 }

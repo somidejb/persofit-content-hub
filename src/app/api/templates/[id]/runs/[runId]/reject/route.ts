@@ -2,8 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { unlink } from "fs/promises";
-import path from "path";
+import { deleteStoredImages } from "@/lib/blob-storage";
 
 export async function POST(
   _req: NextRequest,
@@ -27,16 +26,8 @@ export async function POST(
     });
 
     if (slideshow) {
-      // Delete generated image files from disk
-      const imagePaths = slideshow.slides.flatMap((s) =>
-        [s.generatedImagePath, s.processedImagePath, s.finalImagePath].filter(Boolean) as string[]
-      );
-
-      await Promise.allSettled(
-        imagePaths.map((p) =>
-          unlink(path.join(process.cwd(), "public", p.replace(/^\//, ""))).catch(() => undefined)
-        )
-      );
+      const imagePaths = slideshow.slides.flatMap((s) => [s.generatedImagePath, s.processedImagePath, s.finalImagePath]);
+      await deleteStoredImages(imagePaths);
 
       // Cascade-delete slideshow (slides deleted via onDelete: Cascade in schema)
       await prisma.slideshow.delete({ where: { id: run.slideshowId } });

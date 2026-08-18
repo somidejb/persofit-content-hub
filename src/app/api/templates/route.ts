@@ -67,7 +67,31 @@ export async function GET() {
       },
     },
   });
-  return NextResponse.json(templates);
+
+  // SlideshowTemplateRun.slideshowId isn't a declared Prisma relation, so pull
+  // slideshow statuses separately and merge them in. This lets the client
+  // treat a run as "images done" the moment the slideshow itself finishes
+  // generating, instead of waiting on the run's own wrap-up bookkeeping
+  // (marking AWAITING_APPROVAL, or finishing an auto-post to TikTok) — which
+  // otherwise left the "Run All Templates" panel showing a loading spinner
+  // for a few extra seconds after every slide was already visibly done.
+  const slideshowIds = Array.from(
+    new Set(templates.flatMap((t) => t.runs.map((r) => r.slideshowId).filter((id): id is string => !!id)))
+  );
+  const slideshows = slideshowIds.length
+    ? await prisma.slideshow.findMany({ where: { id: { in: slideshowIds } }, select: { id: true, status: true } })
+    : [];
+  const statusById = new Map(slideshows.map((s) => [s.id, s.status]));
+
+  const withSlideshowStatus = templates.map((t) => ({
+    ...t,
+    runs: t.runs.map((r) => ({
+      ...r,
+      slideshowStatus: r.slideshowId ? statusById.get(r.slideshowId) ?? null : null,
+    })),
+  }));
+
+  return NextResponse.json(withSlideshowStatus);
 }
 
 export async function POST(req: NextRequest) {
