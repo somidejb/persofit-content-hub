@@ -32,6 +32,13 @@ export type MockSlide = OverlaySettings & {
   errorMessage: string | null;
 };
 
+export type MockSlideshowRun = {
+  id: string;
+  name: string;
+  status: string;
+  tiktokAccountName: string | null;
+};
+
 export type MockSlideshow = {
   id: string;
   name: string;
@@ -44,6 +51,8 @@ export type MockSlideshow = {
   aspectRatio: string;
   outputWidth: number;
   outputHeight: number;
+  targetAccountIds: string[];
+  runs: MockSlideshowRun[];
   slides: MockSlide[];
   nextPostDate: string | null;
   postTime: string | null;
@@ -56,6 +65,7 @@ export type MockAccount = {
   id: string;
   name: string;
   accountId: string;
+  avatarUrl: string | null;
   connected: boolean;
   slideshowCount: number;
   tokenExpiresAt: string | null;

@@ -214,7 +214,7 @@ async function buildSlideCreateData(
   });
 }
 
-export type RunProgressEvent =
+type BaseRunProgressEvent =
   | { type: "planning_start" }
   | { type: "planning_done"; slideCount: number }
   | { type: "slideshow_created"; slideshowId: string; slides: { id: string; order: number; imageMode: string }[] }
@@ -222,7 +222,44 @@ export type RunProgressEvent =
   | { type: "slide_done"; slideId: string; order: number; finalImagePath: string }
   | { type: "slide_failed"; slideId: string; order: number; message: string }
   | { type: "complete"; status: string; slideshowId: string }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "account_start"; index: number; total: number }
+  | { type: "account_complete"; status: string; slideshowId: string | null };
+
+// accountId/accountName are attached to every event once multi-account
+// support kicks in; absent (undefined) for the legacy single-account path,
+// so existing consumers that don't check for them are unaffected.
+export type RunProgressEvent = BaseRunProgressEvent & { accountId?: string | null; accountName?: string | null };
+
+type ResolvedTarget = { id: string | null; name: string | null };
+
+/**
+ * Templates can target multiple accounts via targetAccountIds (JSON array).
+ * Falls back to the single legacy tiktokAccountId (possibly null) when empty,
+ * so untouched templates behave exactly as before.
+ */
+async function resolveTargetAccounts(template: {
+  targetAccountIds: string;
+  tiktokAccountId: string | null;
+}): Promise<ResolvedTarget[]> {
+  let ids: string[] = [];
+  try {
+    ids = JSON.parse(template.targetAccountIds || "[]");
+  } catch {
+    ids = [];
+  }
+  ids = ids.filter(Boolean);
+
+  if (ids.length === 0) {
+    if (!template.tiktokAccountId) return [{ id: null, name: null }];
+    const account = await prisma.tiktokAccount.findUnique({ where: { id: template.tiktokAccountId } });
+    return [{ id: template.tiktokAccountId, name: account?.name ?? null }];
+  }
+
+  const accounts = await prisma.tiktokAccount.findMany({ where: { id: { in: ids } } });
+  const nameById = new Map(accounts.map((a) => [a.id, a.name]));
+  return ids.map((id) => ({ id, name: nameById.get(id) ?? null }));
+}
 
 /** Core logic extracted so both runDueTemplates and runTemplateNow can share it */
 async function executeTemplateRun(
@@ -235,7 +272,6 @@ async function executeTemplateRun(
     referenceImagePath: string | null;
     caption: string | null;
     hashtags: string | null;
-    tiktokAccountId: string | null;
     tiktokMusicId: string | null;
     aspectRatio: string;
     outputWidth: number;
@@ -243,6 +279,7 @@ async function executeTemplateRun(
     autoPost: boolean;
     templateSlides: SlideshowTemplateSlide[];
   },
+  accountId: string | null,
   runId: string,
   today: string,
   onProgress?: (event: RunProgressEvent) => void | Promise<void>
@@ -293,7 +330,7 @@ async function executeTemplateRun(
       caption: template.caption ?? undefined,
       hashtags: template.hashtags ?? undefined,
       status: "DRAFT",
-      tiktokAccountId: template.tiktokAccountId ?? null,
+      tiktokAccountId: accountId,
       tiktokMusicId: template.tiktokMusicId ?? null,
       aspectRatio: template.aspectRatio,
       outputWidth: template.outputWidth,
@@ -346,11 +383,24 @@ async function executeTemplateRun(
   }
 }
 
-/** Run a specific template immediately (used by the Run Now button). Streams progress via callback. */
+export type TemplateRunResult = {
+  accountId: string | null;
+  accountName: string | null;
+  runId: string;
+  slideshowId: string | null;
+  status: string;
+};
+
+/**
+ * Run a specific template immediately (used by the Run Now button). Runs
+ * once per target account (falls back to the template's single legacy
+ * account when no target accounts are configured), sequentially, so one
+ * account's failure never blocks the others. Streams progress via callback.
+ */
 export async function runTemplateNow(
   templateId: string,
   onProgress?: (event: RunProgressEvent) => void | Promise<void>
-): Promise<{ runId: string; slideshowId: string | null; status: string }> {
+): Promise<{ accounts: TemplateRunResult[] }> {
   const today = new Date().toISOString().slice(0, 10);
 
   const template = await prisma.slideshowTemplate.findUnique({
@@ -359,34 +409,51 @@ export async function runTemplateNow(
   });
   if (!template) throw new Error("Template not found");
 
-  const existingRun = await prisma.slideshowTemplateRun.findFirst({
-    where: { templateId, scheduledFor: today },
-  });
-  if (existingRun) {
-    if (existingRun.status === "REJECTED" || existingRun.status === "FAILED") {
+  const targets = await resolveTargetAccounts(template);
+  const results: TemplateRunResult[] = [];
+
+  for (let i = 0; i < targets.length; i++) {
+    const { id: accountId, name: accountName } = targets[i];
+
+    const existingRun = await prisma.slideshowTemplateRun.findFirst({
+      where: { templateId, scheduledFor: today, tiktokAccountId: accountId },
+    });
+    if (existingRun && existingRun.status !== "REJECTED" && existingRun.status !== "FAILED") {
+      results.push({ accountId, accountName, runId: existingRun.id, slideshowId: existingRun.slideshowId, status: existingRun.status });
+      continue;
+    }
+    if (existingRun) {
       await prisma.slideshowTemplateRun.delete({ where: { id: existingRun.id } });
-    } else {
-      return { runId: existingRun.id, slideshowId: existingRun.slideshowId, status: existingRun.status };
+    }
+
+    const run = await prisma.slideshowTemplateRun.create({
+      data: { templateId, scheduledFor: today, tiktokAccountId: accountId, status: "GENERATING" },
+    });
+
+    await onProgress?.({ type: "account_start", accountId, accountName, index: i + 1, total: targets.length });
+
+    try {
+      await executeTemplateRun(template, accountId, run.id, today, async (event) => {
+        await onProgress?.({ ...event, accountId, accountName });
+      });
+      const updated = await prisma.slideshowTemplateRun.findUnique({ where: { id: run.id } });
+      const status = updated?.status ?? "UNKNOWN";
+      const slideshowId = updated?.slideshowId ?? null;
+      results.push({ accountId, accountName, runId: run.id, slideshowId, status });
+      await onProgress?.({ type: "account_complete", accountId, accountName, status, slideshowId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      await prisma.slideshowTemplateRun.update({
+        where: { id: run.id },
+        data: { status: "FAILED", errorMessage: message },
+      });
+      await onProgress?.({ type: "error", message, accountId, accountName });
+      results.push({ accountId, accountName, runId: run.id, slideshowId: null, status: "FAILED" });
+      await onProgress?.({ type: "account_complete", accountId, accountName, status: "FAILED", slideshowId: null });
     }
   }
 
-  const run = await prisma.slideshowTemplateRun.create({
-    data: { templateId, scheduledFor: today, status: "GENERATING" },
-  });
-
-  try {
-    await executeTemplateRun(template, run.id, today, onProgress);
-    const updated = await prisma.slideshowTemplateRun.findUnique({ where: { id: run.id } });
-    return { runId: run.id, slideshowId: updated?.slideshowId ?? null, status: updated?.status ?? "UNKNOWN" };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    await prisma.slideshowTemplateRun.update({
-      where: { id: run.id },
-      data: { status: "FAILED", errorMessage: message },
-    });
-    await onProgress?.({ type: "error", message });
-    throw err;
-  }
+  return { accounts: results };
 }
 
 export async function runDueTemplates() {
@@ -398,7 +465,6 @@ export async function runDueTemplates() {
   const activeTemplates = await prisma.slideshowTemplate.findMany({
     where: { active: true, postTime: currentTime },
     include: {
-      tiktokAccount: true,
       templateSlides: { orderBy: { order: "asc" } },
     },
   });
@@ -408,24 +474,28 @@ export async function runDueTemplates() {
     try { scheduleDays = JSON.parse(template.scheduleDays); } catch { scheduleDays = []; }
     if (!scheduleDays.includes(todayCode)) continue;
 
-    const existingRun = await prisma.slideshowTemplateRun.findFirst({
-      where: { templateId: template.id, scheduledFor: today },
-    });
-    if (existingRun) continue;
+    const targets = await resolveTargetAccounts(template);
 
-    const run = await prisma.slideshowTemplateRun.create({
-      data: { templateId: template.id, scheduledFor: today, status: "GENERATING" },
-    });
-
-    try {
-      await executeTemplateRun(template, run.id, today);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      await prisma.slideshowTemplateRun.update({
-        where: { id: run.id },
-        data: { status: "FAILED", errorMessage: message },
+    for (const { id: accountId } of targets) {
+      const existingRun = await prisma.slideshowTemplateRun.findFirst({
+        where: { templateId: template.id, scheduledFor: today, tiktokAccountId: accountId },
       });
-      console.error(`[template-runner] template ${template.id} run ${run.id} failed:`, err);
+      if (existingRun) continue;
+
+      const run = await prisma.slideshowTemplateRun.create({
+        data: { templateId: template.id, scheduledFor: today, tiktokAccountId: accountId, status: "GENERATING" },
+      });
+
+      try {
+        await executeTemplateRun(template, accountId, run.id, today);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
+        await prisma.slideshowTemplateRun.update({
+          where: { id: run.id },
+          data: { status: "FAILED", errorMessage: message },
+        });
+        console.error(`[template-runner] template ${template.id} run ${run.id} (account ${accountId ?? "none"}) failed:`, err);
+      }
     }
   }
 }

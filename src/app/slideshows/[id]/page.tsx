@@ -9,7 +9,13 @@ export default async function SlideshowDetailPage({ params }: { params: { id: st
   const [row, accounts] = await Promise.all([
     prisma.slideshow.findUnique({
       where: { id: params.id },
-      include: { slides: true, tiktokAccount: true, schedules: true, posts: true },
+      include: {
+        slides: true,
+        tiktokAccount: true,
+        schedules: true,
+        posts: true,
+        runs: { include: { tiktokAccount: true }, orderBy: { createdAt: "desc" } },
+      },
     }),
     prisma.tiktokAccount.findMany({ orderBy: { name: "asc" } }),
   ]);

@@ -130,9 +130,23 @@ export default function AccountsClient({ initialAccounts }: { initialAccounts: M
             return (
               <div key={acc.id} className="card flex flex-col gap-3 p-4">
                 <div className="flex items-start justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{acc.name}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">ID: {acc.accountId || "—"}</p>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {acc.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={acc.avatarUrl}
+                        alt=""
+                        className="h-10 w-10 flex-shrink-0 rounded-full border border-surface-border object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-200 text-xs text-zinc-500">
+                        {acc.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-white">{acc.name}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-zinc-500">ID: {acc.accountId || "—"}</p>
+                    </div>
                   </div>
                   {acc.connected ? (
                     <span className="flex items-center gap-1 rounded-full border border-neon/30 bg-neon/10 px-2 py-0.5 text-[11px] font-medium text-neon">

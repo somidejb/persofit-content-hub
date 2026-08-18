@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { refreshTikTokToken } from "@/lib/tiktok";
+import { refreshTikTokToken, fetchTikTokUserInfo } from "@/lib/tiktok";
 
 export async function POST(
   _req: NextRequest,
@@ -35,6 +35,18 @@ export async function POST(
 
     const expiresAt = new Date(Date.now() + tokens.expiresIn * 1000);
 
+    // Best-effort — backfills the real display name / avatar for accounts
+    // connected before profile info was fetched (or if it failed at the time).
+    let displayName: string | null = null;
+    let avatarUrl: string | null = null;
+    try {
+      const info = await fetchTikTokUserInfo(tokens.accessToken);
+      displayName = info.displayName;
+      avatarUrl = info.avatarUrl;
+    } catch (err) {
+      console.error("[tiktok refresh] failed to fetch user info:", err);
+    }
+
     await prisma.tiktokAccount.update({
       where: { id: account.id },
       data: {
@@ -42,6 +54,8 @@ export async function POST(
         refreshToken: tokens.refreshToken,
         tokenExpiresAt: expiresAt,
         connected: true,
+        ...(displayName ? { name: displayName } : {}),
+        ...(avatarUrl ? { avatarUrl } : {}),
       },
     });
 

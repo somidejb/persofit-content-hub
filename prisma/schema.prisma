@@ -28,6 +28,7 @@ model TiktokAccount {
   slideshows         Slideshow[]
   posts              PostHistory[]
   slideshowTemplates SlideshowTemplate[]
+  templateRuns       SlideshowTemplateRun[]
 }
 
 model Slideshow {
@@ -47,6 +48,17 @@ model Slideshow {
   outputWidth    Int     @default(1080)
   outputHeight   Int     @default(1920)
   tiktokMusicId  String?
+
+  // Multi-account posting: JSON-encoded array of TiktokAccount ids.
+  // Remembers the last selection made in the "Post to Accounts" modal.
+  // When "Post to Accounts" is used, this Slideshow is cloned once per
+  // account (see src/lib/posting.ts) — each clone points back here via
+  // sourceSlideshowId and is generated + posted independently.
+  targetAccountIds String @default("[]")
+
+  sourceSlideshowId String?
+  sourceSlideshow   Slideshow?  @relation("SlideshowRuns", fields: [sourceSlideshowId], references: [id], onDelete: Cascade)
+  runs              Slideshow[] @relation("SlideshowRuns")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -151,6 +163,10 @@ model SlideshowTemplate {
   autoPost           Boolean   @default(false)
   active             Boolean   @default(true)
   tiktokMusicId      String?
+  // JSON-encoded array of TiktokAccount ids. When non-empty, each scheduled
+  // or manual run is repeated once per account (falls back to the single
+  // tiktokAccountId above when empty, for backward compatibility).
+  targetAccountIds   String    @default("[]")
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -186,11 +202,16 @@ model SlideshowTemplateSlide {
 }
 
 model SlideshowTemplateRun {
-  id           String            @id @default(cuid())
-  templateId   String
-  template     SlideshowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  slideshowId  String?
-  status       String            @default("GENERATING")
+  id              String            @id @default(cuid())
+  templateId      String
+  template        SlideshowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  slideshowId     String?
+  // Which account this specific run generated/posted for. Null on runs
+  // created before multi-account support (they used the template's single
+  // legacy tiktokAccountId).
+  tiktokAccountId String?
+  tiktokAccount   TiktokAccount?    @relation(fields: [tiktokAccountId], references: [id])
+  status          String            @default("GENERATING")
   // GENERATING | AWAITING_APPROVAL | POSTED | FAILED | REJECTED
   scheduledFor String
   errorMessage String?

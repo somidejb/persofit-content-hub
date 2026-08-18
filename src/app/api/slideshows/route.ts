@@ -13,6 +13,7 @@ const INCLUDE = {
 
 export async function GET() {
   const slideshows = await prisma.slideshow.findMany({
+    where: { sourceSlideshowId: null },
     include: INCLUDE,
     orderBy: { updatedAt: "desc" },
   });

@@ -55,7 +55,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     include: {
       tiktokAccount: { select: { id: true, name: true } },
       templateSlides: { orderBy: { order: "asc" } },
-      runs: { orderBy: { createdAt: "desc" } },
+      runs: {
+        orderBy: { createdAt: "desc" },
+        include: { tiktokAccount: { select: { id: true, name: true } } },
+      },
     },
   });
 
@@ -71,7 +74,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json();
 
   const {
-    name, caption, hashtags, tiktokAccountId, tiktokMusicId, concept, variables,
+    name, caption, hashtags, tiktokAccountId, tiktokMusicId, targetAccountIds, concept, variables,
     slideCount, referenceImagePath, aspectRatio, outputWidth, outputHeight,
     postTime, scheduleDays, autoPost, active, templateSlides,
   } = body;
@@ -82,6 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (hashtags !== undefined) data.hashtags = hashtags;
   if (tiktokAccountId !== undefined) data.tiktokAccountId = tiktokAccountId || null;
   if (tiktokMusicId !== undefined) data.tiktokMusicId = tiktokMusicId || null;
+  if (targetAccountIds !== undefined) data.targetAccountIds = Array.isArray(targetAccountIds) ? JSON.stringify(targetAccountIds) : "[]";
   if (concept !== undefined) data.concept = concept;
   if (variables !== undefined) data.variables = variables || null;
   if (slideCount !== undefined) data.slideCount = slideCount;

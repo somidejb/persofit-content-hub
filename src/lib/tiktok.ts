@@ -80,6 +80,36 @@ export async function refreshTikTokToken({
 export class TikTokApiError extends Error {}
 
 /**
+ * Fetches basic profile info (display name + avatar) for the connected
+ * account, using only the `user.info.basic` scope already requested during
+ * OAuth — no extra Developer Portal scope approval needed. TikTok's basic
+ * scope does NOT expose the @username handle; that requires the deeper
+ * `user.info.profile` scope, which must be added to both the app's
+ * Developer Portal config and the requested scopes in
+ * src/app/api/auth/tiktok/route.ts before `username` will be populated.
+ */
+export async function fetchTikTokUserInfo(
+  accessToken: string
+): Promise<{ displayName: string | null; avatarUrl: string | null }> {
+  const url = new URL("https://open.tiktokapis.com/v2/user/info/");
+  url.searchParams.set("fields", "display_name,avatar_url");
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  const json = await res.json();
+  if (!res.ok || json.error?.code === "error") {
+    throw new TikTokApiError(`Fetching TikTok user info failed: ${json.error?.message ?? res.status}`);
+  }
+
+  return {
+    displayName: json.data?.user?.display_name ?? null,
+    avatarUrl: json.data?.user?.avatar_url ?? null,
+  };
+}
+
+/**
  * Publishes a set of generated slide images as a TikTok photo post via the
  * Content Posting API's PULL_FROM_URL flow.
  *

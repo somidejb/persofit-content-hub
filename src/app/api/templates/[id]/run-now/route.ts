@@ -24,26 +24,9 @@ export async function POST(
     });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const existingRun = await prisma.slideshowTemplateRun.findFirst({
-    where: { templateId: id, scheduledFor: today },
-  });
-
-  if (existingRun) {
-    const retriable = existingRun.status === "REJECTED" || existingRun.status === "FAILED";
-    if (!retriable) {
-      return new Response(
-        JSON.stringify({
-          error: `Already ran today (status: ${existingRun.status}). Wait until tomorrow or approve/reject the existing run first.`,
-          runId: existingRun.id,
-          status: existingRun.status,
-        }),
-        { status: 409, headers: { "Content-Type": "application/json" } }
-      );
-    }
-    // Delete the failed/rejected run so runTemplateNow can create a fresh one
-    await prisma.slideshowTemplateRun.delete({ where: { id: existingRun.id } });
-  }
+  // Per-account dedup/retry (skip already-completed accounts, retry failed/
+  // rejected ones) is handled inside runTemplateNow itself, since "already
+  // ran today" is now a per-account question, not a per-template one.
 
   const encoder = new TextEncoder();
 
@@ -58,9 +41,10 @@ export async function POST(
       }
 
       try {
-        await runTemplateNow(id, async (event) => {
+        const result = await runTemplateNow(id, async (event) => {
           send(event);
         });
+        send({ type: "run_complete", accounts: result.accounts });
       } catch (err) {
         send({ type: "error", message: err instanceof Error ? err.message : "Run failed" });
       } finally {

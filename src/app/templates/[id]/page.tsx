@@ -18,6 +18,7 @@ export default async function TemplateDetailPage({
       templateSlides: { orderBy: { order: "asc" } },
       runs: {
         orderBy: { createdAt: "desc" },
+        include: { tiktokAccount: { select: { id: true, name: true } } },
       },
     },
   });

@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn, GripVertical, StopCircle } from "lucide-react";
+import Link from "next/link";
+import { Sparkles, Send, Trash2, Eye, Heart, User, Calendar, Pencil, RefreshCw, Loader2, Download, X, ZoomIn, GripVertical, StopCircle, Users, ExternalLink } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -20,6 +21,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import StatusBadge from "@/components/ui/StatusBadge";
 import MusicField, { extractMusicId } from "@/components/ui/MusicField";
+import PostToAccountsModal from "./PostToAccountsModal";
 import type { MockSlideshow, MockScheduleEntry, MockHistoryEntry } from "@/lib/types";
 
 type Account = { id: string; name: string };
@@ -44,6 +46,7 @@ export default function SlideshowDetailClient({
   const [postResult, setPostResult] = useState<{ ok: true; publishId: string } | { ok: false; error: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [individuallyGenerating, setIndividuallyGenerating] = useState<Set<string>>(new Set());
+  const [multiPostOpen, setMultiPostOpen] = useState(false);
   // Per-slide abort controllers keyed by slideId
   const slideAbortRefs = useRef<Map<string, AbortController>>(new Map());
   // Abort controller for generate-all stream
@@ -432,6 +435,9 @@ export default function SlideshowDetailClient({
             {posting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
             {posting ? "Posting…" : "Post Now"}
           </button>
+          <button onClick={() => setMultiPostOpen(true)} className="btn-secondary">
+            <Users size={15} /> Post to Accounts
+          </button>
           {allGenerated && (
             <a
               href={`/api/slideshows/${slideshow.id}/download`}
@@ -591,6 +597,30 @@ export default function SlideshowDetailClient({
           </p>
         </div>
       </div>
+
+      {slideshow.runs.length > 0 && (
+        <div className="card p-4">
+          <h2 className="mb-3 text-sm font-semibold text-white">
+            Posted Variations <span className="text-zinc-500">({slideshow.runs.length})</span>
+          </h2>
+          <p className="mb-3 text-[11px] text-zinc-500">
+            Each was generated and posted independently via &ldquo;Post to Accounts&rdquo;.
+          </p>
+          <div className="flex flex-col gap-2">
+            {slideshow.runs.map((r) => (
+              <div key={r.id} className="flex items-center justify-between border-b border-surface-border pb-2 text-xs last:border-0">
+                <span className="text-zinc-300">{r.tiktokAccountName ?? "No account"}</span>
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={r.status} />
+                  <Link href={`/slideshows/${r.id}`} className="flex items-center gap-1 text-neon hover:underline">
+                    View <ExternalLink size={11} />
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {history.length > 0 && (
         <div className="card p-4">
@@ -768,6 +798,16 @@ export default function SlideshowDetailClient({
             </div>
           </div>
         </div>
+      )}
+
+      {multiPostOpen && (
+        <PostToAccountsModal
+          slideshowId={slideshow.id}
+          legacyAccountId={slideshow.tiktokAccountId}
+          initialTargetAccountIds={slideshow.targetAccountIds}
+          onClose={() => setMultiPostOpen(false)}
+          onComplete={() => router.refresh()}
+        />
       )}
     </div>
   );

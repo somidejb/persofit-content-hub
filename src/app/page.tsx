@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const [slideshowRows, historyRows, scheduleRows] = await Promise.all([
     prisma.slideshow.findMany({
+      where: { sourceSlideshowId: null },
       include: { slides: true, tiktokAccount: true, schedules: true, posts: true },
       orderBy: { updatedAt: "desc" },
     }),

@@ -12,6 +12,7 @@ export type FullSlideshow = Slideshow & {
   tiktokAccount: TiktokAccount | null;
   schedules: Schedule[];
   posts: PostHistory[];
+  runs?: (Slideshow & { tiktokAccount: TiktokAccount | null })[];
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -49,6 +50,19 @@ export function toSlideshowCard(s: FullSlideshow): MockSlideshow {
     aspectRatio: s.aspectRatio,
     outputWidth: s.outputWidth,
     outputHeight: s.outputHeight,
+    targetAccountIds: (() => {
+      try {
+        return JSON.parse(s.targetAccountIds || "[]");
+      } catch {
+        return [];
+      }
+    })(),
+    runs: (s.runs ?? []).map((r) => ({
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      tiktokAccountName: r.tiktokAccount?.name ?? null,
+    })),
     slides: [...s.slides]
       .sort((a, b) => a.order - b.order)
       .map((sl) => toSlide(sl)),
@@ -98,6 +112,7 @@ export function toAccount(a: TiktokAccount & { _count?: { slideshows: number } }
     id: a.id,
     name: a.name,
     accountId: a.accountId,
+    avatarUrl: a.avatarUrl ?? null,
     connected: a.connected,
     slideshowCount: a._count?.slideshows ?? 0,
     tokenExpiresAt: a.tokenExpiresAt ? a.tokenExpiresAt.toISOString() : null,

@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SlideshowsPage() {
   const rows = await prisma.slideshow.findMany({
+    where: { sourceSlideshowId: null },
     include: { slides: true, tiktokAccount: true, schedules: true, posts: true },
     orderBy: { updatedAt: "desc" },
   });

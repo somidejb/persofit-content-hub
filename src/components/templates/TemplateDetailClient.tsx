@@ -25,6 +25,8 @@ type Run = {
   id: string;
   templateId: string;
   slideshowId: string | null;
+  tiktokAccountId: string | null;
+  tiktokAccount: { id: string; name: string } | null;
   status: string;
   scheduledFor: string;
   errorMessage: string | null;
@@ -60,6 +62,7 @@ type Template = {
   hashtags: string;
   tiktokAccountId: string | null;
   tiktokMusicId: string | null;
+  targetAccountIds: string;
   concept: string;
   variables: string | null;
   slideCount: number;
@@ -88,6 +91,18 @@ const RUN_STATUS_STYLES: Record<string, { label: string; className: string }> = 
   REJECTED: { label: "Rejected", className: "bg-zinc-800 text-zinc-500 border-zinc-700" },
 };
 
+function updateAccountSection<T extends { accountId: string | null }>(
+  list: T[],
+  accountId: string | null,
+  fn: (item: T) => T
+): T[] {
+  const idx = list.map((a) => a.accountId).lastIndexOf(accountId);
+  if (idx === -1) return list;
+  const updated = [...list];
+  updated[idx] = fn(updated[idx]);
+  return updated;
+}
+
 export default function TemplateDetailClient({
   template: initial,
   accounts,
@@ -110,9 +125,16 @@ export default function TemplateDetailClient({
   const [runNowError, setRunNowError] = useState<string | null>(null);
 
   type SlideProgress = { order: number; imageMode: string; status: "pending" | "generating" | "done" | "failed"; imagePath?: string; error?: string };
+  type AccountSection = {
+    accountId: string | null;
+    accountName: string | null;
+    status: "generating" | "done" | "failed";
+    slides: SlideProgress[];
+  };
   type RunPhase = "idle" | "planning" | "generating" | "done" | "error";
   const [runPhase, setRunPhase] = useState<RunPhase>("idle");
-  const [runSlides, setRunSlides] = useState<SlideProgress[]>([]);
+  const [runAccounts, setRunAccounts] = useState<AccountSection[]>([]);
+  const [multiAccountRun, setMultiAccountRun] = useState(false);
 
   let days: string[] = [];
   try { days = JSON.parse(template.scheduleDays); } catch { days = []; }
@@ -171,7 +193,8 @@ export default function TemplateDetailClient({
     setRunNowLoading(true);
     setRunNowError(null);
     setRunPhase("planning");
-    setRunSlides([]);
+    setRunAccounts([]);
+    setMultiAccountRun(false);
 
     try {
       const res = await fetch(`/api/templates/${template.id}/run-now`, { method: "POST" });
@@ -200,8 +223,12 @@ export default function TemplateDetailClient({
           try { event = JSON.parse(line.slice(6)); } catch { continue; }
 
           const type = event.type as string;
+          const accountId = (event.accountId as string | null | undefined) ?? null;
+          const accountName = (event.accountName as string | null | undefined) ?? null;
 
-          if (type === "planning_start") {
+          if (type === "account_start") {
+            if ((event.total as number) > 1) setMultiAccountRun(true);
+            setRunAccounts((prev) => [...prev, { accountId, accountName, status: "generating", slides: [] }]);
             setRunPhase("planning");
           } else if (type === "planning_done") {
             setRunPhase("generating");
@@ -211,28 +238,42 @@ export default function TemplateDetailClient({
               imageMode: s.imageMode,
               status: "pending" as const,
             }));
-            setRunSlides(slides);
+            setRunAccounts((prev) => updateAccountSection(prev, accountId, (acc) => ({ ...acc, slides })));
           } else if (type === "slide_start") {
-            setRunSlides((prev) =>
-              prev.map((s) => s.order === (event.order as number) ? { ...s, status: "generating" } : s)
+            setRunAccounts((prev) =>
+              updateAccountSection(prev, accountId, (acc) => ({
+                ...acc,
+                slides: acc.slides.map((s) => (s.order === (event.order as number) ? { ...s, status: "generating" } : s)),
+              }))
             );
           } else if (type === "slide_done") {
-            setRunSlides((prev) =>
-              prev.map((s) =>
-                s.order === (event.order as number)
-                  ? { ...s, status: "done", imagePath: event.finalImagePath as string }
-                  : s
-              )
+            setRunAccounts((prev) =>
+              updateAccountSection(prev, accountId, (acc) => ({
+                ...acc,
+                slides: acc.slides.map((s) =>
+                  s.order === (event.order as number)
+                    ? { ...s, status: "done", imagePath: event.finalImagePath as string }
+                    : s
+                ),
+              }))
             );
           } else if (type === "slide_failed") {
-            setRunSlides((prev) =>
-              prev.map((s) =>
-                s.order === (event.order as number)
-                  ? { ...s, status: "failed", error: event.message as string }
-                  : s
-              )
+            setRunAccounts((prev) =>
+              updateAccountSection(prev, accountId, (acc) => ({
+                ...acc,
+                slides: acc.slides.map((s) =>
+                  s.order === (event.order as number) ? { ...s, status: "failed", error: event.message as string } : s
+                ),
+              }))
             );
-          } else if (type === "complete") {
+          } else if (type === "account_complete") {
+            setRunAccounts((prev) =>
+              updateAccountSection(prev, accountId, (acc) => ({
+                ...acc,
+                status: (event.status as string) === "FAILED" ? "failed" : "done",
+              }))
+            );
+          } else if (type === "run_complete") {
             setRunPhase("done");
             router.refresh();
           } else if (type === "error") {
@@ -281,6 +322,13 @@ export default function TemplateDetailClient({
           initialValues={{
             ...template,
             scheduleDays: days,
+            targetAccountIds: (() => {
+              try {
+                return JSON.parse(template.targetAccountIds);
+              } catch {
+                return [];
+              }
+            })(),
             templateSlides: template.templateSlides,
           }}
         />
@@ -390,9 +438,19 @@ export default function TemplateDetailClient({
             </span>
           </div>
 
-          {runSlides.length > 0 && (
-            <div className="space-y-1.5">
-              {runSlides.map((s) => (
+          {runAccounts.map((acc, i) => (
+            <div key={`${acc.accountId ?? "none"}-${i}`} className="space-y-1.5">
+              {multiAccountRun && (
+                <div className="flex items-center gap-2 pt-1">
+                  {acc.status === "generating" && <Loader2 size={12} className="animate-spin text-neon shrink-0" />}
+                  {acc.status === "done" && <CheckCircle2 size={12} className="text-neon shrink-0" />}
+                  {acc.status === "failed" && <XCircle size={12} className="text-red-400 shrink-0" />}
+                  <span className="text-xs font-medium text-zinc-300">
+                    {acc.accountName ? `@${acc.accountName}` : "No account"}
+                  </span>
+                </div>
+              )}
+              {acc.slides.map((s) => (
                 <div key={s.order} className="flex items-center gap-3 rounded-lg border border-surface-border bg-surface-200 px-3 py-2">
                   {s.status === "pending" && <div className="h-3 w-3 rounded-full border border-zinc-600 shrink-0" />}
                   {s.status === "generating" && <Loader2 size={12} className="animate-spin text-neon shrink-0" />}
@@ -409,7 +467,7 @@ export default function TemplateDetailClient({
                 </div>
               ))}
             </div>
-          )}
+          ))}
         </div>
       )}
 
@@ -569,6 +627,9 @@ export default function TemplateDetailClient({
                     <span className="text-sm font-medium text-white shrink-0">
                       {run.scheduledFor}
                     </span>
+                    {run.tiktokAccount && (
+                      <span className="text-xs text-zinc-500 shrink-0">@{run.tiktokAccount.name}</span>
+                    )}
                     <span
                       className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${style.className}`}
                     >

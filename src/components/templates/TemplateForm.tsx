@@ -57,6 +57,7 @@ interface TemplateFormProps {
     hashtags: string;
     tiktokAccountId: string | null;
     tiktokMusicId?: string | null;
+    targetAccountIds?: string[];
     concept: string;
     variables: string | null;
     slideCount: number;
@@ -80,6 +81,7 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
   const [caption, setCaption] = useState(initialValues?.caption ?? "");
   const [hashtags, setHashtags] = useState(initialValues?.hashtags ?? "");
   const [tiktokAccountId, setTiktokAccountId] = useState(initialValues?.tiktokAccountId ?? "");
+  const [targetAccountIds, setTargetAccountIds] = useState<string[]>(initialValues?.targetAccountIds ?? []);
   const [musicRaw, setMusicRaw] = useState(initialValues?.tiktokMusicId ?? "");
   const [concept, setConcept] = useState(initialValues?.concept ?? "");
   const [variables, setVariables] = useState(initialValues?.variables ?? "");
@@ -139,6 +141,12 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
     );
   }
 
+  function toggleTargetAccount(id: string) {
+    setTargetAccountIds((prev) =>
+      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
+    );
+  }
+
   function handleAspectRatioChange(value: string) {
     setAspectRatio(value);
     const preset = ASPECT_RATIO_PRESETS.find((p) => p.value === value);
@@ -181,6 +189,7 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
       hashtags: hashtags.trim(),
       tiktokAccountId: tiktokAccountId || null,
       tiktokMusicId: extractMusicId(musicRaw) || null,
+      targetAccountIds,
       concept: concept.trim(),
       variables: variables.trim() || null,
       slideCount,
@@ -305,6 +314,35 @@ export default function TemplateForm({ accounts, initialValues, onSaved }: Templ
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[11px] text-zinc-600">
+              Used when no Target Accounts are selected below.
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">
+              Target Accounts <span className="text-zinc-600">(multi-post, optional)</span>
+            </label>
+            <p className="mb-2 text-[11px] text-zinc-500">
+              Select one or more accounts to run this template once per account — each gets its own
+              fresh generation and its own post. Leave empty to use the single account above.
+            </p>
+            {accounts.length === 0 ? (
+              <p className="text-xs text-zinc-600">No connected accounts yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {accounts.map((a) => (
+                  <label key={a.id} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={targetAccountIds.includes(a.id)}
+                      onChange={() => toggleTargetAccount(a.id)}
+                      className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-neon"
+                    />
+                    <span className="text-sm text-zinc-300">@{a.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
           <MusicField value={musicRaw} onChange={setMusicRaw} />
         </div>
