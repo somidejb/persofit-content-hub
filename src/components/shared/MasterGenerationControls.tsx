@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle, ExternalLink, RefreshCw } from "lucide-react";
+import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle, ExternalLink, RefreshCw, Send } from "lucide-react";
 
 type RunSummary = {
   status: string;
@@ -22,7 +22,11 @@ type RunAllResult = {
   slideshowId?: string | null;
   doneSlides?: number;
   totalSlides?: number;
+  postStatus?: "posting" | "posted" | "post_failed";
+  postMessage?: string;
 };
+
+type Account = { id: string; name: string; connected: boolean };
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -144,6 +148,13 @@ export default function MasterGenerationControls() {
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [postingAll, setPostingAll] = useState(false);
+  const [postAllError, setPostAllError] = useState<string | null>(null);
+
   const reconcile = useCallback(async () => {
     try {
       const templates = await fetchTemplates();
@@ -263,6 +274,86 @@ export default function MasterGenerationControls() {
     }
   }
 
+  // Slideshows generated in this batch that are ready to be posted (finished
+  // generating, not currently mid-post already).
+  const readyToPost = runAllResults.filter(
+    (r) => r.status === "done" && r.slideshowId && r.postStatus !== "posting"
+  );
+
+  async function handleOpenPostAll() {
+    setPostAllError(null);
+    if (!accountsLoaded) {
+      try {
+        const res = await fetch("/api/accounts");
+        const body = await res.json();
+        setAccounts(Array.isArray(body) ? body : []);
+        setAccountsLoaded(true);
+      } catch {
+        setPostAllError("Failed to load TikTok accounts");
+        return;
+      }
+    }
+    setPickerOpen(true);
+  }
+
+  async function handleConfirmPostAll() {
+    if (!selectedAccountId) return;
+    const account = accounts.find((a) => a.id === selectedAccountId);
+    const targets = readyToPost;
+    if (targets.length === 0) {
+      setPickerOpen(false);
+      return;
+    }
+    if (
+      !confirm(
+        `Post ${targets.length} generated slideshow${targets.length === 1 ? "" : "s"} to "${account?.name ?? "this account"}", one after another?`
+      )
+    ) {
+      return;
+    }
+
+    setPickerOpen(false);
+    setPostingAll(true);
+    setPostAllError(null);
+
+    for (const target of targets) {
+      const slideshowId = target.slideshowId as string;
+      setRunAllResults((prev) =>
+        prev.map((r) => (r.id === target.id ? { ...r, postStatus: "posting", postMessage: undefined } : r))
+      );
+      try {
+        const patchRes = await fetch(`/api/slideshows/${slideshowId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tiktokAccountId: selectedAccountId }),
+        });
+        if (!patchRes.ok) {
+          const body = await patchRes.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to assign TikTok account");
+        }
+
+        const postRes = await fetch(`/api/slideshows/${slideshowId}/post`, { method: "POST" });
+        const postBody = await postRes.json().catch(() => ({}));
+        if (!postRes.ok) throw new Error(postBody.error || "Failed to post to TikTok");
+
+        setRunAllResults((prev) =>
+          prev.map((r) => (r.id === target.id ? { ...r, postStatus: "posted", postMessage: undefined } : r))
+        );
+      } catch (err) {
+        setRunAllResults((prev) =>
+          prev.map((r) =>
+            r.id === target.id
+              ? { ...r, postStatus: "post_failed", postMessage: err instanceof Error ? err.message : "Failed to post" }
+              : r
+          )
+        );
+      }
+    }
+
+    setPostingAll(false);
+    router.refresh();
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button onClick={handleStopAll} disabled={stopping} className="btn-danger">
@@ -273,6 +364,21 @@ export default function MasterGenerationControls() {
         {runningAll ? <Loader2 size={15} className="animate-spin" /> : <PlayCircle size={15} />}
         Run All Templates
       </button>
+      {readyToPost.length > 0 && (
+        <button onClick={handleOpenPostAll} disabled={postingAll} className="btn-secondary">
+          {postingAll ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+          {postingAll ? "Posting…" : `Post All to Account (${readyToPost.length})`}
+        </button>
+      )}
+
+      {postAllError && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-400">
+          {postAllError}
+          <button onClick={() => setPostAllError(null)} className="opacity-60 hover:opacity-100">
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {(stopResult || stopError) && (
         <div
@@ -333,15 +439,88 @@ export default function MasterGenerationControls() {
                           Retry
                         </button>
                       )}
+                      {r.postStatus === "posting" && (
+                        <span className="flex items-center gap-1 text-blue-400">
+                          <Loader2 size={11} className="animate-spin" /> Posting…
+                        </span>
+                      )}
+                      {r.postStatus === "posted" && (
+                        <span className="flex items-center gap-1 text-neon">
+                          <Send size={11} /> Posted
+                        </span>
+                      )}
+                      {r.postStatus === "post_failed" && (
+                        <span className="flex items-center gap-1 text-red-400">
+                          <XCircle size={11} /> Post failed
+                        </span>
+                      )}
                     </div>
                   </div>
                   {r.status === "failed" && r.message && (
                     <p className="text-[11px] text-red-400/90">{r.message}</p>
                   )}
+                  {r.postStatus === "post_failed" && r.postMessage && (
+                    <p className="text-[11px] text-red-400/90">{r.postMessage}</p>
+                  )}
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-surface-border bg-surface shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
+              <h2 className="text-base font-semibold text-white">Post All to Account</h2>
+              <button
+                onClick={() => setPickerOpen(false)}
+                className="rounded-lg p-1.5 text-zinc-500 hover:bg-surface-200 hover:text-white transition"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="px-5 py-5 space-y-4">
+              <p className="text-xs text-zinc-400">
+                Posts {readyToPost.length} generated slideshow{readyToPost.length === 1 ? "" : "s"} to the chosen
+                account, one after another. Each slideshow&apos;s assigned account will be updated to match.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1.5">TikTok Account</label>
+                <select
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  className="input-field w-full"
+                >
+                  <option value="">— Select an account —</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.connected ? "" : " (not connected)"}
+                    </option>
+                  ))}
+                </select>
+                {accountsLoaded && accounts.length === 0 && (
+                  <p className="mt-1.5 text-[11px] text-zinc-500">No TikTok accounts connected yet.</p>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-surface-border px-5 py-4">
+              <button onClick={() => setPickerOpen(false)} className="btn-secondary">
+                Cancel
+              </button>
+              <button onClick={handleConfirmPostAll} disabled={!selectedAccountId} className="btn-primary">
+                <Send size={14} /> Post All
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
