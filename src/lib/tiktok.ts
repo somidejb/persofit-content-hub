@@ -79,6 +79,42 @@ export async function refreshTikTokToken({
 
 export class TikTokApiError extends Error {}
 
+// Known TikTok Content Posting API error codes translated into plain
+// English + an actionable fix, so failures don't just surface raw JSON.
+// Falls back to TikTok's own `error.message` (or the raw body) for any
+// code not listed here, so nothing gets swallowed — just made friendlier
+// when we recognize it.
+const TIKTOK_ERROR_MESSAGES: Record<string, string> = {
+  unaudited_client_can_only_post_to_private_accounts:
+    'This app hasn\'t completed TikTok\'s Content Posting API audit yet, and unaudited apps can only post to TikTok accounts set to Private. Fix: on the TikTok account you\'re posting to, open TikTok → Profile → Settings and Privacy → Privacy → turn on "Private Account", then try again.',
+  scope_not_authorized:
+    'This TikTok account\'s connection is missing the "video.publish" permission. Disconnect it and reconnect via "Connect with TikTok", approving all requested permissions.',
+  spam_risk_too_many_posts:
+    "TikTok is rate-limiting how many posts this account can make right now. Wait a while before posting again.",
+  spam_risk_user_banned_from_posting:
+    "TikTok has restricted this account from posting (spam/policy flag on their end). This isn't something the app can work around — check the account's status directly in TikTok.",
+  reached_active_user_cap:
+    "This TikTok Developer app has hit its cap on active users for an unaudited app. Submitting the app for TikTok's audit removes this limit.",
+};
+
+function describeTikTokError(status: number, rawText: string): string {
+  let parsed: { error?: { code?: string; message?: string } } | null = null;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    parsed = null;
+  }
+
+  const code = parsed?.error?.code;
+  if (code && TIKTOK_ERROR_MESSAGES[code]) {
+    return TIKTOK_ERROR_MESSAGES[code];
+  }
+  if (parsed?.error?.message) {
+    return `TikTok rejected the post (${code ?? status}): ${parsed.error.message}`;
+  }
+  return `TikTok init failed (${status}): ${rawText.slice(0, 300)}`;
+}
+
 /**
  * Fetches basic profile info (display name + avatar) for the connected
  * account, using only the `user.info.basic` scope already requested during
@@ -171,7 +207,7 @@ export async function postPhotoSlideshow({
 
   if (!initRes.ok) {
     const text = await initRes.text().catch(() => "");
-    throw new TikTokApiError(`TikTok init failed (${initRes.status}): ${text.slice(0, 300)}`);
+    throw new TikTokApiError(describeTikTokError(initRes.status, text));
   }
 
   const initJson = await initRes.json();

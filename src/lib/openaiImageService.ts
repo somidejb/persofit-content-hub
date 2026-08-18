@@ -6,6 +6,38 @@ import { pickOpenAIRequestSize } from "./aspect-ratio-presets";
 export class OpenAIImageError extends Error {}
 
 /**
+ * OpenAI's moderation pass on image generation appears to have some
+ * non-determinism — the exact same prompt + reference image sometimes gets
+ * rejected and sometimes doesn't. Rather than failing the slide outright on
+ * the first rejection, retry a few times before giving up.
+ */
+function isSafetySystemRejection(err: unknown): boolean {
+  if (!(err instanceof OpenAI.APIError)) return false;
+  if (err.status !== 400) return false;
+  if (err.code === "content_policy_violation") return true;
+  return /safety system/i.test(err.message ?? "");
+}
+
+const SAFETY_REJECTION_MAX_ATTEMPTS = 4; // 1 initial try + 3 retries
+
+async function callWithSafetyRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= SAFETY_REJECTION_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (!isSafetySystemRejection(err) || attempt === SAFETY_REJECTION_MAX_ATTEMPTS) throw err;
+      console.warn(
+        `[openaiImageService] ${label}: safety-system rejection on attempt ${attempt}/${SAFETY_REJECTION_MAX_ATTEMPTS}, retrying…`
+      );
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+    }
+  }
+  throw lastError;
+}
+
+/**
  * Generates a slide image via OpenAI.
  * - If referenceImagePath is provided: uses images/edits (image-to-image)
  * - If referenceImagePath is null/undefined: uses images/generate (text-to-image)
@@ -63,13 +95,17 @@ export async function generateSlideImage({
 
       // If image couldn't be loaded, fall back to text-to-image
       if (imageBuffer.length === 0) {
-        const response = await client.images.generate({
-          model,
-          prompt,
-          size,
-          quality: quality as "low" | "medium" | "high" | "auto",
-          n: 1,
-        });
+        const response = await callWithSafetyRetry(
+          () =>
+            client.images.generate({
+              model,
+              prompt,
+              size,
+              quality: quality as "low" | "medium" | "high" | "auto",
+              n: 1,
+            }),
+          "text-to-image (fallback)"
+        );
         const fallbackItem = response.data?.[0];
         const fallbackB64 = fallbackItem?.b64_json ?? (fallbackItem as { url?: string } | undefined)?.url;
         if (!fallbackB64) throw new OpenAIImageError("OpenAI fallback response did not contain image data");
@@ -87,27 +123,36 @@ export async function generateSlideImage({
       };
       const mimeType = mimeTypeMap[ext] ?? "image/png";
 
-      const response = await client.images.edit({
-        model,
-        prompt,
-        image: await toFile(imageBuffer, `reference${ext}`, { type: mimeType }),
-        size,
-        quality: quality as "low" | "medium" | "high" | "auto",
-        n: 1,
-      });
+      const imageFile = await toFile(imageBuffer, `reference${ext}`, { type: mimeType });
+      const response = await callWithSafetyRetry(
+        () =>
+          client.images.edit({
+            model,
+            prompt,
+            image: imageFile,
+            size,
+            quality: quality as "low" | "medium" | "high" | "auto",
+            n: 1,
+          }),
+        "image-to-image edit"
+      );
 
       const item = response.data?.[0];
       if (!item?.b64_json) throw new OpenAIImageError("OpenAI response did not contain image data");
       return Buffer.from(item.b64_json, "base64");
     } else {
       // ── Text-to-image generation ──
-      const response = await client.images.generate({
-        model,
-        prompt,
-        size,
-        quality: quality as "low" | "medium" | "high" | "auto",
-        n: 1,
-      });
+      const response = await callWithSafetyRetry(
+        () =>
+          client.images.generate({
+            model,
+            prompt,
+            size,
+            quality: quality as "low" | "medium" | "high" | "auto",
+            n: 1,
+          }),
+        "text-to-image"
+      );
 
       const item = response.data?.[0];
       if (!item?.b64_json) throw new OpenAIImageError("OpenAI response did not contain image data");

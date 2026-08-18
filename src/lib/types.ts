@@ -39,6 +39,13 @@ export type MockSlideshowRun = {
   tiktokAccountName: string | null;
 };
 
+/** Which template (and scheduled run) generated a given slideshow, if any. */
+export type SlideshowRunInfo = {
+  templateId: string;
+  templateName: string;
+  scheduledFor: string;
+};
+
 export type MockSlideshow = {
   id: string;
   name: string;
