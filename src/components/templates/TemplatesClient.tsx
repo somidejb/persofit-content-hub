@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Plus, ChevronRight, Zap, Clock, Calendar, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
+import MasterGenerationControls from "@/components/shared/MasterGenerationControls";
 
 type RunSummary = {
   id: string;
@@ -87,6 +88,8 @@ export default function TemplatesClient({ templates: initial }: { templates: Tem
           New Template
         </Link>
       </div>
+
+      <MasterGenerationControls />
 
       {templates.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-border py-16 text-center">

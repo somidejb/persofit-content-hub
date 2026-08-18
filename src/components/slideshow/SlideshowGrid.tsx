@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Zap, ArrowUpRight } from "lucide-react";
 import SlideshowCard from "@/components/slideshow/SlideshowCard";
+import MasterGenerationControls from "@/components/shared/MasterGenerationControls";
 import { STATUS_STYLES } from "@/lib/constants";
 import type { MockSlideshow, SlideshowRunInfo } from "@/lib/types";
 
@@ -62,6 +63,8 @@ export default function SlideshowGrid({
 
   return (
     <div className="flex flex-col gap-5">
+      <MasterGenerationControls />
+
       <div className="flex gap-2 overflow-x-auto pb-1">
         {FILTERS.map((f) => (
           <button
