@@ -356,7 +356,7 @@ async function executeTemplateRun(
     slides: slidesCreated,
   });
 
-  const { failed } = await generateAllSlides(createdSlideshow.id, async (event) => {
+  const { failed, cancelled } = await generateAllSlides(createdSlideshow.id, async (event) => {
     if (event.type === "slide_start") {
       const slide = slidesCreated.find((s) => s.id === event.slideId);
       await onProgress?.({ type: "slide_start", slideId: event.slideId, order: slide?.order ?? 0 });
@@ -368,6 +368,10 @@ async function executeTemplateRun(
       await onProgress?.({ type: "slide_failed", slideId: event.slideId, order: slide?.order ?? 0, message: event.message });
     }
   });
+
+  if (cancelled) {
+    throw new Error("Generation was stopped before completing");
+  }
 
   if (failed) {
     const failedSlides = await prisma.slide.findMany({

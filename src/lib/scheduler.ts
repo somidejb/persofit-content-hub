@@ -29,7 +29,8 @@ async function runDueSchedules() {
 
     try {
       await prisma.schedule.update({ where: { id: schedule.id }, data: { status: "GENERATING" } });
-      const { failed } = await generateAllSlides(schedule.slideshowId);
+      const { failed, cancelled } = await generateAllSlides(schedule.slideshowId);
+      if (cancelled) throw new Error("Generation was stopped before completing");
       if (failed) throw new Error("Slide generation failed");
 
       await postSlideshowNow(schedule.slideshowId);

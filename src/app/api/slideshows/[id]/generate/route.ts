@@ -13,7 +13,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
 
       try {
         const result = await generateAllSlides(params.id, (event) => send(event));
-        await send({ type: "complete", failed: result.failed });
+        await send({ type: "complete", failed: result.failed, cancelled: result.cancelled });
       } catch (err) {
         await send({ type: "error", message: err instanceof Error ? err.message : "Generation failed" });
       } finally {

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import GenerationActivityBar from "@/components/shared/GenerationActivityBar";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -29,7 +30,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <div className="lg:pl-60">
         <Topbar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-6">{children}</main>
+        <main className="px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-6">
+          <GenerationActivityBar />
+          {children}
+        </main>
       </div>
     </div>
   );

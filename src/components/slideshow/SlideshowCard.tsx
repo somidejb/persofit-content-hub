@@ -16,6 +16,11 @@ export default function SlideshowCard({ slideshow }: { slideshow: MockSlideshow 
   const progressPct = slideshow.slides.length
     ? Math.round((doneSlides / slideshow.slides.length) * 100)
     : 0;
+  // A single-slide regenerate marks only the slide (not the slideshow) as
+  // generating — surface that on the card too, so activity is visible from
+  // the list no matter which path started it.
+  const generatingCount = slideshow.slides.filter((s) => s.status === "generating").length;
+  const isGenerating = slideshow.status === "GENERATING" || generatingCount > 0;
 
   return (
     <Link
@@ -56,10 +61,14 @@ export default function SlideshowCard({ slideshow }: { slideshow: MockSlideshow 
         )}
       </div>
 
-      {slideshow.status === "GENERATING" && (
+      {isGenerating && (
         <div className="mb-3">
           <div className="mb-1 flex justify-between text-[11px] text-zinc-500">
-            <span>Generating slides</span>
+            <span>
+              {slideshow.status === "GENERATING"
+                ? "Generating slides"
+                : `Regenerating ${generatingCount} slide${generatingCount === 1 ? "" : "s"}`}
+            </span>
             <span>{doneSlides}/{slideshow.slides.length}</span>
           </div>
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-300">

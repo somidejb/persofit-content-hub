@@ -19,6 +19,12 @@ export async function POST(
 ) {
   const { id } = await params;
 
+  // Restore to SCHEDULED (not DRAFT) if this slideshow still has pending
+  // schedules — cancelling a generation shouldn't silently unschedule it.
+  const pendingSchedules = await prisma.schedule.count({
+    where: { slideshowId: id, status: "PENDING" },
+  });
+
   const [updatedSlides] = await Promise.all([
     prisma.slide.updateMany({
       where: { slideshowId: id, status: "generating" },
@@ -26,7 +32,7 @@ export async function POST(
     }),
     prisma.slideshow.update({
       where: { id },
-      data: { status: "DRAFT" },
+      data: { status: pendingSchedules > 0 ? "SCHEDULED" : "DRAFT" },
     }),
   ]);
 

@@ -177,10 +177,69 @@ async function generateOneSlide(
   return { finalImagePath };
 }
 
+/**
+ * A generation is considered stalled (safe to take over or ignore as a guard)
+ * once nothing has touched its DB rows for this long. A single slide —
+ * including safety-system retries — finishes well inside this window, so a
+ * "generating" row older than this can only be a crashed/killed process.
+ */
+const GENERATION_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * True when a slideshow's GENERATING claim looks abandoned: neither the
+ * slideshow row nor ANY of its slide rows has been written in
+ * GENERATION_STALE_MS. A live run writes a slide row every few seconds
+ * (status flips, image paths, prompts), so real activity never looks stale.
+ */
+async function isGenerationStale(slideshowId: string): Promise<boolean> {
+  const [newestSlide, slideshow] = await Promise.all([
+    prisma.slide.findFirst({
+      where: { slideshowId },
+      orderBy: { updatedAt: "desc" },
+      select: { updatedAt: true },
+    }),
+    prisma.slideshow.findUnique({
+      where: { id: slideshowId },
+      select: { updatedAt: true },
+    }),
+  ]);
+  const lastTouched = Math.max(
+    newestSlide?.updatedAt.getTime() ?? 0,
+    slideshow?.updatedAt.getTime() ?? 0
+  );
+  return Date.now() - lastTouched > GENERATION_STALE_MS;
+}
+
+/**
+ * Atomically claims a slideshow for generation by flipping its status to
+ * GENERATING only if it isn't already. This is the duplicate-run guard: two
+ * tabs, a tab + the cron scheduler, or a tab + a template run can no longer
+ * generate the same slideshow concurrently and double-spend on OpenAI.
+ * A claim held by a crashed process (nothing updated for GENERATION_STALE_MS)
+ * is taken over rather than blocking regeneration forever.
+ */
+async function claimSlideshowForGeneration(slideshowId: string): Promise<void> {
+  const claimed = await prisma.slideshow.updateMany({
+    where: { id: slideshowId, status: { not: "GENERATING" } },
+    data: { status: "GENERATING" },
+  });
+  if (claimed.count > 0) return;
+
+  // Already GENERATING — live process, or a crashed one that never cleaned up?
+  if (!(await isGenerationStale(slideshowId))) {
+    throw new Error(
+      "This slideshow is already generating (started from another tab, a template run, or the scheduler). " +
+      "Wait for it to finish or use Stop first — running it twice would pay for every image twice."
+    );
+  }
+  // Stale claim from a dead process — take over.
+  await prisma.slideshow.update({ where: { id: slideshowId }, data: { status: "GENERATING" } });
+}
+
 export async function generateAllSlides(
   slideshowId: string,
   onProgress?: (event: ProgressEvent) => void | Promise<void>
-): Promise<{ failed: boolean }> {
+): Promise<{ failed: boolean; cancelled: boolean }> {
   const slideshow = await prisma.slideshow.findUnique({
     where: { id: slideshowId },
     include: { slides: { orderBy: { order: "asc" } }, schedules: true },
@@ -192,8 +251,9 @@ export async function generateAllSlides(
     throw new Error("OpenAI API key is not configured. Add it in Settings or set OPENAI_API_KEY.");
   }
 
-  await prisma.slideshow.update({ where: { id: slideshow.id }, data: { status: "GENERATING" } });
+  await claimSlideshowForGeneration(slideshow.id);
   let anyFailed = false;
+  let cancelled = false;
 
   const siblingMap = buildSiblingMap(slideshow.slides.filter((s) => s.imageMode !== "random-pick"));
 
@@ -201,6 +261,20 @@ export async function generateAllSlides(
   const generatedPathByOrder = new Map<number, string>();
 
   for (const slide of slideshow.slides) {
+    // Honor cancellation between slides: Stop / Stop All reset the
+    // slideshow's status in the DB — if it's no longer GENERATING, someone
+    // cancelled this run, so bail out before paying for the next image.
+    // (The slide currently mid-flight when Stop is clicked can't be pulled
+    // back from OpenAI, but every remaining one is saved.)
+    const current = await prisma.slideshow.findUnique({
+      where: { id: slideshow.id },
+      select: { status: true },
+    });
+    if (current?.status !== "GENERATING") {
+      cancelled = true;
+      break;
+    }
+
     // Resolve @slide:N reference before generating
     let resolvedSlide = slide;
     if (slide.referenceImagePath?.startsWith("@slide:")) {
@@ -247,18 +321,32 @@ export async function generateAllSlides(
   }
 
   const hasPendingSchedule = slideshow.schedules.some((s) => s.status === "PENDING");
-  await prisma.slideshow.update({
-    where: { id: slideshow.id },
+  // Guarded write: only settle the final status if this run still owns the
+  // GENERATING claim. If a cancel already reset the status (or another
+  // process took over a stale claim), don't stomp on it — that's what used
+  // to leave cancelled runs flipping back to FAILED/DRAFT out of nowhere.
+  await prisma.slideshow.updateMany({
+    where: { id: slideshow.id, status: "GENERATING" },
     data: { status: anyFailed ? "FAILED" : hasPendingSchedule ? "SCHEDULED" : "DRAFT" },
   });
 
-  return { failed: anyFailed };
+  return { failed: anyFailed, cancelled };
 }
 
 /** Generates or regenerates a single slide. Sibling context is loaded from DB for auto-uniqueness. */
 export async function generateSingleSlide(slideshowId: string, slideId: string): Promise<{ finalImagePath: string }> {
   const slideshow = await prisma.slideshow.findUnique({ where: { id: slideshowId } });
   if (!slideshow) throw new Error("Slideshow not found");
+
+  // Don't let a single-slide regen race a whole-slideshow run that's actively
+  // working through this same slideshow (it would double-generate this slide
+  // when the loop reaches it). A stale GENERATING claim from a dead process
+  // doesn't block.
+  if (slideshow.status === "GENERATING" && !(await isGenerationStale(slideshowId))) {
+    throw new Error(
+      "This slideshow is currently running a full generation — wait for it to finish or stop it before regenerating individual slides."
+    );
+  }
 
   const slide = await prisma.slide.findUnique({ where: { id: slideId } });
   if (!slide || slide.slideshowId !== slideshowId) throw new Error("Slide not found");
@@ -277,7 +365,25 @@ export async function generateSingleSlide(slideshowId: string, slideId: string):
   const siblingIndex = siblings.findIndex((s) => s.id === slideId) + 1;
   const siblingTotal = siblings.length;
 
-  await prisma.slide.update({ where: { id: slide.id }, data: { status: "generating", errorMessage: null } });
+  // Duplicate-run guard, same idea as claimSlideshowForGeneration but at
+  // slide granularity: atomically claim the slide by flipping it to
+  // "generating" only if it isn't already. Prevents two tabs (or a tab plus
+  // a generate-all pass) from paying OpenAI twice for the same slide.
+  const claimed = await prisma.slide.updateMany({
+    where: { id: slide.id, status: { not: "generating" } },
+    data: { status: "generating", errorMessage: null },
+  });
+  if (claimed.count === 0) {
+    const isStale = Date.now() - slide.updatedAt.getTime() > GENERATION_STALE_MS;
+    if (!isStale) {
+      throw new Error(
+        "This slide is already generating (possibly from another tab or a running generate-all). " +
+        "Wait for it to finish or stop it first."
+      );
+    }
+    // Stale claim from a dead process — take over.
+    await prisma.slide.update({ where: { id: slide.id }, data: { status: "generating", errorMessage: null } });
+  }
 
   try {
     return await generateOneSlide(slideshow, slide, settings, siblingIndex, siblingTotal);

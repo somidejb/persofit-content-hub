@@ -63,6 +63,7 @@ export default function SlideshowDetailClient({
 
   const triggerReorder = useCallback(
     async (event: DragEndEvent) => {
+      setDragging(false);
       const { active, over } = event;
       if (!over || active.id === over.id) return;
       // Compute the new ordered IDs first (same logic as handleDragEnd)
@@ -90,62 +91,46 @@ export default function SlideshowDetailClient({
   // Lightbox state
   const [lightbox, setLightbox] = useState<{ src: string; index: number } | null>(null);
 
-  // On mount: reset any zombie slides that are stuck in "generating" from a
-  // previous session. On a fresh page load React state is always empty, so any
-  // slide with status "generating" in the DB normally has no live fetch behind
-  // it — UNLESS the slideshow's own status is still GENERATING, which now
-  // legitimately means some OTHER process (a template run, another tab) is
-  // actively working on it right now. In that case, leave it alone — the live
-  // polling effect below will pick it up rather than us prematurely killing it.
-  useEffect(() => {
-    if (slideshow.status === "GENERATING") return;
-
-    const zombies = slideshow.slides.filter((s) => s.status === "generating");
-    if (zombies.length === 0) return;
-
-    // Optimistically reset in local state immediately so the UI is responsive
-    setSlides((prev) =>
-      prev.map((s) => (s.status === "generating" ? { ...s, status: "draft", errorMessage: null } : s))
-    );
-
-    // Clean up DB in the background
-    fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally runs only once on mount
-
-  // Live-watch: while the slideshow is GENERATING and it's not this tab doing
-  // it (generating === false), poll the server so slide thumbnails/statuses
-  // update in real time — this is what makes "click through to watch it
-  // generate" actually show live progress when a template run (or another
-  // tab) is the one driving it.
-  const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Live sync: the database is the single source of truth for this
+  // slideshow, and this page keeps itself reconciled against it continuously
+  // — not just while generating. That's what makes a generation started
+  // ANYWHERE (another tab, a template run, the scheduler) show up here live,
+  // and what keeps slide statuses/reorders/regenerations made elsewhere from
+  // going stale in this tab. Stuck "generating" slides are no longer
+  // auto-reset on mount — that used to silently kill real in-flight
+  // generations started by other processes; instead they simply display as
+  // generating (with a Stop button) until the server settles them, and the
+  // global activity bar flags them as stalled if nothing is really running.
+  const [dragging, setDragging] = useState(false);
   const reconcileFromServer = useCallback(async () => {
     try {
       const res = await fetch(`/api/slideshows/${slideshow.id}`);
       if (!res.ok) return;
       const fresh: MockSlideshow = await res.json();
-      setSlides(fresh.slides);
-      setStatus(fresh.status);
+      // Keep state identity stable when nothing changed, so polling doesn't
+      // cause pointless re-renders (or reset the poll interval each tick).
+      setSlides((prev) => (JSON.stringify(prev) === JSON.stringify(fresh.slides) ? prev : fresh.slides));
+      setStatus((prev) => (prev === fresh.status ? prev : fresh.status));
     } catch {
       // transient — next poll tick will retry
     }
   }, [slideshow.id]);
 
+  // Pause reconciliation while THIS tab is mid-operation (its own streams and
+  // optimistic updates are fresher than the server) or mid-drag, and while
+  // the tab is hidden. Everything else — including simply sitting idle on a
+  // DRAFT slideshow — keeps syncing.
+  const busyLocally =
+    generating || individuallyGenerating.size > 0 || pendingReorder !== null || dragging;
+
   useEffect(() => {
-    const watchingElsewhere = !generating && status === "GENERATING";
-    if (watchingElsewhere && !livePollRef.current) {
-      livePollRef.current = setInterval(reconcileFromServer, 3000);
-    } else if (!watchingElsewhere && livePollRef.current) {
-      clearInterval(livePollRef.current);
-      livePollRef.current = null;
-    }
-    return () => {
-      if (livePollRef.current) {
-        clearInterval(livePollRef.current);
-        livePollRef.current = null;
-      }
-    };
-  }, [generating, status, reconcileFromServer]);
+    if (busyLocally) return;
+    const anythingGenerating = status === "GENERATING" || slides.some((s) => s.status === "generating");
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") reconcileFromServer();
+    }, anythingGenerating ? 3000 : 8000);
+    return () => clearInterval(interval);
+  }, [busyLocally, status, slides, reconcileFromServer]);
 
   useEffect(() => {
     if (!lightbox) return;
@@ -371,7 +356,10 @@ export default function SlideshowDetailClient({
       // Active fetch in this session — abort it (the catch block resets state)
       ctrl.abort();
     } else {
-      // Zombie slide: no active fetch, just reset locally and clean up DB
+      // Slide generating without a local fetch (started elsewhere, or left
+      // behind by a dead process): reset exactly this one slide — the
+      // per-slide cancel endpoint never touches siblings or the slideshow's
+      // own status, so other in-flight generations are unaffected.
       setSlides((prev) =>
         prev.map((s) => (s.id === slideId ? { ...s, status: "draft", errorMessage: null } : s))
       );
@@ -380,7 +368,7 @@ export default function SlideshowDetailClient({
         next.delete(slideId);
         return next;
       });
-      fetch(`/api/slideshows/${slideshow.id}/cancel-generation`, { method: "POST" }).catch(() => {});
+      fetch(`/api/slideshows/${slideshow.id}/slides/${slideId}/cancel`, { method: "POST" }).catch(() => {});
     }
   }
 
@@ -581,7 +569,13 @@ export default function SlideshowDetailClient({
           </h2>
           <p className="text-[11px] text-zinc-600">Drag a card to reorder</p>
         </div>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={triggerReorder}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={() => setDragging(true)}
+          onDragCancel={() => setDragging(false)}
+          onDragEnd={triggerReorder}
+        >
           <SortableContext items={slides.map((s) => s.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
               {slides.map((slide, i) => (

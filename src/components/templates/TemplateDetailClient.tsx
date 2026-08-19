@@ -114,11 +114,13 @@ export default function TemplateDetailClient({
   const [template, setTemplate] = useState(initial);
   const [editing, setEditing] = useState(false);
 
-  // Sync when server refreshes data (router.refresh() re-runs the server component)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Sync when server refreshes data (router.refresh() re-runs the server
+  // component). Keyed on the whole prop, not just updatedAt — run history
+  // changes (new/updated SlideshowTemplateRun rows) don't touch the
+  // template's own updatedAt, and previously went stale here.
   useEffect(() => {
     setTemplate(initial);
-  }, [initial.updatedAt]);
+  }, [initial]);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [runNowLoading, setRunNowLoading] = useState(false);

@@ -230,7 +230,7 @@ export async function postSlideshowToAccounts(
     try {
       cloneId = await cloneSlideshowForAccount(masterId, accountId);
 
-      const { failed } = await generateAllSlides(cloneId, async (event) => {
+      const { failed, cancelled } = await generateAllSlides(cloneId, async (event) => {
         if (event.type === "slide_start") {
           await onProgress?.({ type: "slide_start", accountId, slideId: event.slideId });
         } else if (event.type === "slide_done") {
@@ -239,6 +239,7 @@ export async function postSlideshowToAccounts(
           await onProgress?.({ type: "slide_failed", accountId, slideId: event.slideId, message: event.message });
         }
       });
+      if (cancelled) throw new Error("Generation was stopped before completing");
       if (failed) throw new Error("One or more slides failed to generate");
 
       const postResult = await postSlideshowNow(cloneId);
