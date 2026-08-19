@@ -83,12 +83,39 @@ export async function GET() {
     : [];
   const statusById = new Map(slideshows.map((s) => [s.id, s.status]));
 
+  // A slideshow's status alone can't tell "posting failed" apart from
+  // "generation failed" — both leave it at "FAILED". PostHistory rows are
+  // only ever written by an actual post attempt (postSlideshowNow bails out
+  // before creating one if images aren't ready yet), so the latest row per
+  // slideshow is an unambiguous record of whether posting was ever tried,
+  // and whether it succeeded — this is what lets "Post All to Account" know
+  // which slideshows are already posted (skip, don't duplicate) vs. which
+  // just failed to post (offer a targeted retry instead of a full rerun).
+  const postHistory = slideshowIds.length
+    ? await prisma.postHistory.findMany({
+        where: { slideshowId: { in: slideshowIds } },
+        orderBy: { postedAt: "desc" },
+        select: { slideshowId: true, status: true, errorMessage: true },
+      })
+    : [];
+  const lastPostBySlideshow = new Map<string, { status: string; errorMessage: string | null }>();
+  for (const p of postHistory) {
+    if (!lastPostBySlideshow.has(p.slideshowId)) {
+      lastPostBySlideshow.set(p.slideshowId, { status: p.status, errorMessage: p.errorMessage });
+    }
+  }
+
   const withSlideshowStatus = templates.map((t) => ({
     ...t,
-    runs: t.runs.map((r) => ({
-      ...r,
-      slideshowStatus: r.slideshowId ? statusById.get(r.slideshowId) ?? null : null,
-    })),
+    runs: t.runs.map((r) => {
+      const lastPost = r.slideshowId ? lastPostBySlideshow.get(r.slideshowId) : undefined;
+      return {
+        ...r,
+        slideshowStatus: r.slideshowId ? statusById.get(r.slideshowId) ?? null : null,
+        lastPostStatus: lastPost?.status ?? null,
+        lastPostError: lastPost?.status === "failed" ? lastPost.errorMessage ?? null : null,
+      };
+    }),
   }));
 
   return NextResponse.json(withSlideshowStatus);

@@ -11,6 +11,8 @@ type RunSummary = {
   errorMessage: string | null;
   slideshowId: string | null;
   slideshowStatus?: string | null;
+  lastPostStatus?: string | null;
+  lastPostError?: string | null;
 };
 type TemplateSummary = { id: string; name: string; active: boolean; runs: RunSummary[] };
 
@@ -28,19 +30,20 @@ type RunAllResult = {
 
 type Account = { id: string; name: string; connected: boolean };
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 /**
- * Reconstructs a template's today-status purely from what's durably stored
- * in the database (SlideshowTemplateRun rows) — this is what makes progress
- * survive navigating away and back, or even showing up for runs a scheduled
- * cron job kicked off with nobody watching.
+ * Reconstructs a template's status purely from what's durably stored in the
+ * database (SlideshowTemplateRun rows) — this is what makes progress survive
+ * navigating away and back, a server restart, or even a day boundary, so the
+ * panel stays showing whatever the last run left behind (still awaiting a
+ * post, or failed and needing a retry) until you actually act on it — not
+ * just for "today". A multi-account template creates one run per account on
+ * the same scheduledFor date, so runs are grouped by the most recent
+ * scheduledFor value present (the latest batch), not by literal today.
  */
-function summarizeTemplateToday(t: TemplateSummary, today: string): RunAllResult | null {
-  const todays = t.runs.filter((r) => r.scheduledFor === today);
-  if (todays.length === 0) return null;
+function summarizeLatestRun(t: TemplateSummary): RunAllResult | null {
+  if (t.runs.length === 0) return null;
+  const latestDate = t.runs.reduce((max, r) => (r.scheduledFor > max ? r.scheduledFor : max), t.runs[0].scheduledFor);
+  const batch = t.runs.filter((r) => r.scheduledFor === latestDate);
 
   // A run can sit at status "GENERATING" for a few extra seconds after every
   // slide is already done, while it wraps up (marks AWAITING_APPROVAL, or
@@ -50,13 +53,19 @@ function summarizeTemplateToday(t: TemplateSummary, today: string): RunAllResult
   const isActuallyGenerating = (r: RunSummary) =>
     r.status === "GENERATING" && (r.slideshowStatus == null || r.slideshowStatus === "GENERATING");
 
-  const generatingRun = todays.find(isActuallyGenerating);
+  const generatingRun = batch.find(isActuallyGenerating);
   if (generatingRun) {
     return { id: t.id, name: t.name, status: "running", slideshowId: generatingRun.slideshowId };
   }
 
-  const failedRun = todays.find(
-    (r) => r.status === "FAILED" || r.status === "REJECTED" || r.slideshowStatus === "FAILED"
+  // A slideshow's own status alone can't tell "posting failed" apart from
+  // "generation failed" — postSlideshowNow marks the slideshow FAILED too.
+  // A PostHistory row only ever exists if a post was actually attempted,
+  // which can only happen once generation already succeeded — so if one is
+  // present, this was never a generation failure, whatever the slideshow's
+  // current status says.
+  const failedRun = batch.find(
+    (r) => r.lastPostStatus == null && (r.status === "FAILED" || r.status === "REJECTED" || r.slideshowStatus === "FAILED")
   );
   if (failedRun) {
     return {
@@ -68,8 +77,16 @@ function summarizeTemplateToday(t: TemplateSummary, today: string): RunAllResult
     };
   }
 
-  const latest = todays[0];
-  return { id: t.id, name: t.name, status: "done", slideshowId: latest?.slideshowId ?? null };
+  const latest = batch[0];
+  return {
+    id: t.id,
+    name: t.name,
+    status: "done",
+    slideshowId: latest?.slideshowId ?? null,
+    postStatus:
+      latest?.lastPostStatus === "posted" ? "posted" : latest?.lastPostStatus === "failed" ? "post_failed" : undefined,
+    postMessage: latest?.lastPostStatus === "failed" ? latest.lastPostError ?? undefined : undefined,
+  };
 }
 
 async function fetchTemplates(): Promise<TemplateSummary[]> {
@@ -158,10 +175,14 @@ export default function MasterGenerationControls() {
   const reconcile = useCallback(async () => {
     try {
       const templates = await fetchTemplates();
-      const today = todayIso();
+      // Active templates only (matches what "Run All Templates" would run),
+      // but no date filter — a template's most recent run stays visible here
+      // indefinitely, across days and reloads, until it's posted or retried.
+      // This also naturally picks up templates being added/removed/renamed/
+      // paused, since it re-fetches the live template list every time.
       const results = templates
         .filter((t) => t.active)
-        .map((t) => summarizeTemplateToday(t, today))
+        .map(summarizeLatestRun)
         .filter((r): r is RunAllResult => r !== null);
       setRunAllResults(results);
     } catch {
@@ -169,23 +190,22 @@ export default function MasterGenerationControls() {
     }
   }, []);
 
-  // Reconstruct today's run status from the server on every mount, so
-  // navigating away and back (or a scheduled run nobody was watching)
-  // still shows real progress instead of a blank slate.
+  // Reconstruct run status from the server on every mount, so navigating
+  // away and back (or a scheduled run nobody was watching) still shows real
+  // progress instead of a blank slate.
   useEffect(() => {
     reconcile();
   }, [reconcile]);
 
-  // While anything is still generating, keep polling so this stays live even
-  // if a different tab (or no tab) triggered the run.
+  // Keep polling for as long as this panel is mounted — fast while something
+  // is actively generating (so it stays live even if a different tab or no
+  // tab triggered the run), slower once everything's settled, so the panel
+  // still catches up on templates added, removed, or edited elsewhere
+  // without needing a manual refresh.
   useEffect(() => {
     const hasRunning = runAllResults.some((r) => r.status === "running");
-    if (hasRunning && !pollRef.current) {
-      pollRef.current = setInterval(reconcile, 5000);
-    } else if (!hasRunning && pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    const intervalMs = hasRunning ? 5000 : 30000;
+    pollRef.current = setInterval(reconcile, intervalMs);
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
@@ -274,11 +294,42 @@ export default function MasterGenerationControls() {
     }
   }
 
-  // Slideshows generated in this batch that are ready to be posted (finished
-  // generating, not currently mid-post already).
+  // Slideshows generated in this batch that are ready to be posted: finished
+  // generating, not currently mid-post, and — crucially — not already posted.
+  // postStatus "posted" comes from durable PostHistory data (see /api/templates),
+  // so this stays correct even across a reload, which is what keeps a repeat
+  // "Post All to Account" click from double-posting anything that already went out.
   const readyToPost = runAllResults.filter(
-    (r) => r.status === "done" && r.slideshowId && r.postStatus !== "posting"
+    (r) => r.status === "done" && r.slideshowId && r.postStatus !== "posting" && r.postStatus !== "posted"
   );
+
+  /** Retries posting a single slideshow that previously failed — reuses whatever
+   * TikTok account was already assigned to it (set during the earlier attempt),
+   * so it only re-attempts the post itself, never regenerates or reassigns. */
+  async function handleRetryPost(id: string) {
+    const target = runAllResults.find((r) => r.id === id);
+    if (!target?.slideshowId) return;
+    setRunAllResults((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, postStatus: "posting", postMessage: undefined } : r))
+    );
+    try {
+      const postRes = await fetch(`/api/slideshows/${target.slideshowId}/post`, { method: "POST" });
+      const postBody = await postRes.json().catch(() => ({}));
+      if (!postRes.ok) throw new Error(postBody.error || "Failed to post to TikTok");
+      setRunAllResults((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, postStatus: "posted", postMessage: undefined } : r))
+      );
+      router.refresh();
+    } catch (err) {
+      setRunAllResults((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? { ...r, postStatus: "post_failed", postMessage: err instanceof Error ? err.message : "Failed to post" }
+            : r
+        )
+      );
+    }
+  }
 
   async function handleOpenPostAll() {
     setPostAllError(null);
@@ -450,9 +501,17 @@ export default function MasterGenerationControls() {
                         </span>
                       )}
                       {r.postStatus === "post_failed" && (
-                        <span className="flex items-center gap-1 text-red-400">
-                          <XCircle size={11} /> Post failed
-                        </span>
+                        <>
+                          <span className="flex items-center gap-1 text-red-400">
+                            <XCircle size={11} /> Post failed
+                          </span>
+                          <button
+                            onClick={() => handleRetryPost(r.id)}
+                            className="flex items-center gap-1 text-zinc-500 hover:text-neon transition"
+                          >
+                            <RefreshCw size={11} /> Retry Post
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
