@@ -11,10 +11,16 @@ function sseEvent(data: Record<string, unknown>): string {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  // force: true (the template page's explicit Run Now) re-runs even when
+  // today's run already completed; without it (Run All Templates), accounts
+  // that completed today are skipped. Actively-generating accounts are never
+  // re-run either way.
+  const body = await req.json().catch(() => ({}));
+  const force = body?.force === true;
 
   const template = await prisma.slideshowTemplate.findUnique({ where: { id } });
   if (!template) {
@@ -41,9 +47,13 @@ export async function POST(
       }
 
       try {
-        const result = await runTemplateNow(id, async (event) => {
-          send(event);
-        });
+        const result = await runTemplateNow(
+          id,
+          async (event) => {
+            send(event);
+          },
+          { force }
+        );
         send({ type: "run_complete", accounts: result.accounts });
       } catch (err) {
         send({ type: "error", message: err instanceof Error ? err.message : "Run failed" });

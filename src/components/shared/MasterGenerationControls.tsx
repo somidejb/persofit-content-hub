@@ -294,14 +294,14 @@ export default function MasterGenerationControls() {
     }
   }
 
-  // Slideshows generated in this batch that are ready to be posted: finished
-  // generating, not currently mid-post, and — crucially — not already posted.
-  // postStatus "posted" comes from durable PostHistory data (see /api/templates),
-  // so this stays correct even across a reload, which is what keeps a repeat
-  // "Post All to Account" click from double-posting anything that already went out.
+  // Every finished slideshow in this batch is a valid post target, including
+  // ones already posted — that's what lets the same batch be sent to a second
+  // account. Only an in-flight post is excluded, to avoid firing twice at once.
   const readyToPost = runAllResults.filter(
-    (r) => r.status === "done" && r.slideshowId && r.postStatus !== "posting" && r.postStatus !== "posted"
+    (r) => r.status === "done" && r.slideshowId && r.postStatus !== "posting"
   );
+
+  const alreadyPostedCount = readyToPost.filter((r) => r.postStatus === "posted").length;
 
   /** Retries posting a single slideshow that previously failed — reuses whatever
    * TikTok account was already assigned to it (set during the earlier attempt),
@@ -551,6 +551,13 @@ export default function MasterGenerationControls() {
                 Posts {readyToPost.length} generated slideshow{readyToPost.length === 1 ? "" : "s"} to the chosen
                 account, one after another. Each slideshow&apos;s assigned account will be updated to match.
               </p>
+              {alreadyPostedCount > 0 && (
+                <p className="text-[11px] text-amber-400/90">
+                  {alreadyPostedCount} of these {alreadyPostedCount === 1 ? "has" : "have"} already been posted and
+                  will be sent again with the same images. Posting identical content to a second account can be
+                  flagged by TikTok as duplicate.
+                </p>
+              )}
               <div>
                 <label className="block text-xs font-medium text-zinc-400 mb-1.5">TikTok Account</label>
                 <select

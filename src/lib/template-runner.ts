@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { prisma } from "./prisma";
-import { generateAllSlides } from "./generation";
+import { generateAllSlides, isGenerationStale } from "./generation";
 import { postSlideshowNow } from "./posting";
 import type { SlideshowTemplateSlide, Prisma } from "@prisma/client";
 
@@ -410,11 +410,20 @@ export type TemplateRunResult = {
  * once per target account (falls back to the template's single legacy
  * account when no target accounts are configured), sequentially, so one
  * account's failure never blocks the others. Streams progress via callback.
+ *
+ * By default an account that already completed today is skipped (this is
+ * what keeps "Run All Templates" and the scheduler idempotent). With
+ * `force: true` — an explicit per-template Run Now click — a completed run
+ * is re-run fresh (the old run and its slideshow are kept as history). An
+ * account that is ACTIVELY generating right now is never re-run, forced or
+ * not: that would pay for every image twice.
  */
 export async function runTemplateNow(
   templateId: string,
-  onProgress?: (event: RunProgressEvent) => void | Promise<void>
+  onProgress?: (event: RunProgressEvent) => void | Promise<void>,
+  opts?: { force?: boolean }
 ): Promise<{ accounts: TemplateRunResult[] }> {
+  const force = opts?.force ?? false;
   const today = new Date().toISOString().slice(0, 10);
 
   const template = await prisma.slideshowTemplate.findUnique({
@@ -429,14 +438,37 @@ export async function runTemplateNow(
   for (let i = 0; i < targets.length; i++) {
     const { id: accountId, name: accountName } = targets[i];
 
+    // Latest run today for this account decides what happens (force may add
+    // several same-day rows over time, so ordering matters).
     const existingRun = await prisma.slideshowTemplateRun.findFirst({
       where: { templateId, scheduledFor: today, tiktokAccountId: accountId },
+      orderBy: { createdAt: "desc" },
     });
-    if (existingRun && existingRun.status !== "REJECTED" && existingRun.status !== "FAILED") {
-      results.push({ accountId, accountName, runId: existingRun.id, slideshowId: existingRun.slideshowId, status: existingRun.status });
-      continue;
-    }
-    if (existingRun) {
+
+    if (existingRun?.status === "GENERATING") {
+      const stale = existingRun.slideshowId
+        ? await isGenerationStale(existingRun.slideshowId)
+        : Date.now() - existingRun.createdAt.getTime() > 10 * 60 * 1000;
+      if (!stale) {
+        // A live process is already generating this — never double-spend.
+        results.push({ accountId, accountName, runId: existingRun.id, slideshowId: existingRun.slideshowId, status: existingRun.status });
+        continue;
+      }
+      // Stalled claim from a dead process — settle it and run fresh.
+      await prisma.slideshowTemplateRun.update({
+        where: { id: existingRun.id },
+        data: { status: "FAILED", errorMessage: "Stalled — no activity for 10+ minutes" },
+      });
+    } else if (existingRun && existingRun.status !== "REJECTED" && existingRun.status !== "FAILED") {
+      if (!force) {
+        // Already completed today — bulk runs skip instead of duplicating.
+        results.push({ accountId, accountName, runId: existingRun.id, slideshowId: existingRun.slideshowId, status: existingRun.status });
+        continue;
+      }
+      // Forced re-run: keep the completed run and its slideshow as history;
+      // a brand-new run is created below.
+    } else if (existingRun) {
+      // FAILED / REJECTED — replace the dead row on retry, as before.
       await prisma.slideshowTemplateRun.delete({ where: { id: existingRun.id } });
     }
 

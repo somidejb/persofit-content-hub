@@ -199,7 +199,14 @@ export default function TemplateDetailClient({
     setMultiAccountRun(false);
 
     try {
-      const res = await fetch(`/api/templates/${template.id}/run-now`, { method: "POST" });
+      // force: an explicit Run Now on this template always produces a fresh
+      // run, even if today's run already completed (the old run stays in
+      // history). Only an actively-generating run blocks it.
+      const res = await fetch(`/api/templates/${template.id}/run-now`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
 
       // Handle non-streaming error responses (409 conflict, 404, etc.)
       if (!res.ok || res.headers.get("Content-Type")?.includes("application/json")) {

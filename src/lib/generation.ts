@@ -191,7 +191,7 @@ const GENERATION_STALE_MS = 10 * 60 * 1000;
  * GENERATION_STALE_MS. A live run writes a slide row every few seconds
  * (status flips, image paths, prompts), so real activity never looks stale.
  */
-async function isGenerationStale(slideshowId: string): Promise<boolean> {
+export async function isGenerationStale(slideshowId: string): Promise<boolean> {
   const [newestSlide, slideshow] = await Promise.all([
     prisma.slide.findFirst({
       where: { slideshowId },
