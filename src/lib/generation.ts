@@ -238,8 +238,16 @@ async function claimSlideshowForGeneration(slideshowId: string): Promise<void> {
 
 export async function generateAllSlides(
   slideshowId: string,
-  onProgress?: (event: ProgressEvent) => void | Promise<void>
-): Promise<{ failed: boolean; cancelled: boolean }> {
+  onProgress?: (event: ProgressEvent) => void | Promise<void>,
+  /**
+   * onlyMissing: resume mode. Slides already marked "done" are left alone
+   * instead of being regenerated, so picking up an interrupted run doesn't
+   * pay OpenAI a second time for images that already exist.
+   */
+  opts?: { onlyMissing?: boolean }
+): Promise<{ failed: boolean; cancelled: boolean; skipped: number }> {
+  const onlyMissing = opts?.onlyMissing ?? false;
+
   const slideshow = await prisma.slideshow.findUnique({
     where: { id: slideshowId },
     include: { slides: { orderBy: { order: "asc" } }, schedules: true },
@@ -257,10 +265,25 @@ export async function generateAllSlides(
 
   const siblingMap = buildSiblingMap(slideshow.slides.filter((s) => s.imageMode !== "random-pick"));
 
-  // Track order → finalImagePath for slide-chaining (@slide:N references)
+  // Track order → finalImagePath for slide-chaining (@slide:N references).
+  // Pre-seed with slides that are already finished: in resume mode they're
+  // skipped below, but a later slide may still chain off one of them.
   const generatedPathByOrder = new Map<number, string>();
+  for (const slide of slideshow.slides) {
+    if (slide.status === "done" && slide.finalImagePath) {
+      generatedPathByOrder.set(slide.order, slide.finalImagePath);
+    }
+  }
+
+  let skipped = 0;
 
   for (const slide of slideshow.slides) {
+    // Resume mode: leave finished slides exactly as they are.
+    if (onlyMissing && slide.status === "done" && slide.finalImagePath) {
+      skipped++;
+      continue;
+    }
+
     // Honor cancellation between slides: Stop / Stop All reset the
     // slideshow's status in the DB — if it's no longer GENERATING, someone
     // cancelled this run, so bail out before paying for the next image.
@@ -330,7 +353,7 @@ export async function generateAllSlides(
     data: { status: anyFailed ? "FAILED" : hasPendingSchedule ? "SCHEDULED" : "DRAFT" },
   });
 
-  return { failed: anyFailed, cancelled };
+  return { failed: anyFailed, cancelled, skipped };
 }
 
 /** Generates or regenerates a single slide. Sibling context is loaded from DB for auto-uniqueness. */

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2, Zap, StopCircle, ExternalLink, AlertTriangle, CalendarClock, MousePointerClick } from "lucide-react";
+import { Loader2, Zap, StopCircle, ExternalLink, AlertTriangle, CalendarClock, MousePointerClick, PlayCircle } from "lucide-react";
 
 type ActivityItem = {
   slideshowId: string;
@@ -36,6 +36,7 @@ export default function GenerationActivityBar() {
   const [active, setActive] = useState<ActivityItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
   const prevKeyRef = useRef<string>("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -98,6 +99,40 @@ export default function GenerationActivityBar() {
     activeRef.current = active;
   }, [active]);
 
+  /**
+   * Picks up a stalled run where it left off. The stale GENERATING claim is
+   * cleared first so generation can re-claim it, then generate is called in
+   * resume mode — slides that already finished are left alone, so this only
+   * pays for the ones still missing.
+   */
+  async function handleResume(item: ActivityItem) {
+    const remaining = item.totalSlides - item.doneSlides;
+    if (
+      !confirm(
+        `Resume "${item.slideshowName}"? The ${item.doneSlides} finished slide${item.doneSlides === 1 ? "" : "s"} ` +
+          `will be kept, and only the remaining ${remaining} will be generated.`
+      )
+    ) {
+      return;
+    }
+    setResumingId(item.slideshowId);
+    try {
+      await fetch(`/api/slideshows/${item.slideshowId}/cancel-generation`, { method: "POST" });
+      // Fire and let the activity bar's own polling track progress from here.
+      await fetch(`/api/slideshows/${item.slideshowId}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume: true }),
+      });
+      await poll();
+      router.refresh();
+    } catch {
+      // Progress is polled from the DB, so a dropped response isn't fatal.
+    } finally {
+      setResumingId(null);
+    }
+  }
+
   async function handleStop(item: ActivityItem) {
     if (
       !confirm(
@@ -159,7 +194,8 @@ export default function GenerationActivityBar() {
                   </span>
                   {item.stalled && (
                     <span className="shrink-0 text-[10px] text-yellow-400">
-                      stalled — no activity for 10+ min, safe to stop
+                      stalled — no activity for 10+ min
+                      {item.failedSlides === 0 && ", likely OpenAI throttling"}
                     </span>
                   )}
                 </span>
@@ -170,6 +206,21 @@ export default function GenerationActivityBar() {
                   >
                     Watch <ExternalLink size={10} />
                   </Link>
+                  {item.stalled && item.doneSlides < item.totalSlides && (
+                    <button
+                      onClick={() => handleResume(item)}
+                      disabled={resumingId === item.slideshowId}
+                      className="flex items-center gap-1 text-zinc-500 transition hover:text-neon disabled:opacity-40"
+                      title="Generate only the slides that haven't finished"
+                    >
+                      {resumingId === item.slideshowId ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <PlayCircle size={10} />
+                      )}
+                      Resume
+                    </button>
+                  )}
                   <button
                     onClick={() => handleStop(item)}
                     disabled={stoppingId === item.slideshowId}

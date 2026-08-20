@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle, ExternalLink, RefreshCw, Send } from "lucide-react";
+import { StopCircle, PlayCircle, Loader2, X, CheckCircle2, XCircle, ExternalLink, RefreshCw, Send, Clock } from "lucide-react";
 
 type RunSummary = {
   status: string;
@@ -19,7 +19,7 @@ type TemplateSummary = { id: string; name: string; active: boolean; runs: RunSum
 type RunAllResult = {
   id: string;
   name: string;
-  status: "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed";
   message?: string;
   slideshowId?: string | null;
   doneSlides?: number;
@@ -29,6 +29,32 @@ type RunAllResult = {
 };
 
 type Account = { id: string; name: string; connected: boolean };
+
+/**
+ * How many templates may generate at once during "Run All Templates".
+ *
+ * Firing every template in parallel saturates OpenAI's image rate limit: most
+ * requests get throttled and sit unserved for minutes, which writes nothing to
+ * the DB and so trips the 10-minute staleness check even though the run is
+ * alive. Two at a time keeps every request served.
+ */
+const RUN_ALL_CONCURRENCY = 2;
+
+/** Runs `worker` over `items`, at most `limit` in flight at any moment. */
+async function runWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>
+): Promise<void> {
+  let cursor = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      await worker(item);
+    }
+  });
+  await Promise.all(lanes);
+}
 
 /**
  * Reconstructs a template's status purely from what's durably stored in the
@@ -203,7 +229,7 @@ export default function MasterGenerationControls() {
   // still catches up on templates added, removed, or edited elsewhere
   // without needing a manual refresh.
   useEffect(() => {
-    const hasRunning = runAllResults.some((r) => r.status === "running");
+    const hasRunning = runAllResults.some((r) => r.status === "running" || r.status === "queued");
     const intervalMs = hasRunning ? 5000 : 30000;
     pollRef.current = setInterval(reconcile, intervalMs);
     return () => {
@@ -252,9 +278,11 @@ export default function MasterGenerationControls() {
         return;
       }
 
-      setRunAllResults(active.map((t) => ({ id: t.id, name: t.name, status: "running" })));
+      // Only RUN_ALL_CONCURRENCY of these start immediately; the rest are
+      // queued and flip to "running" as lanes free up.
+      setRunAllResults(active.map((t) => ({ id: t.id, name: t.name, status: "queued" })));
 
-      await Promise.all(active.map((t) => runOneTemplate(t.id, t.name)));
+      await runWithConcurrency(active, RUN_ALL_CONCURRENCY, (t) => runOneTemplate(t.id, t.name));
       await reconcile();
       router.refresh();
     } catch (err) {
@@ -453,10 +481,12 @@ export default function MasterGenerationControls() {
                 <div key={r.id} className="flex flex-col gap-1 border-b border-surface-border pb-2 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between gap-3 text-xs">
                     <span className="flex items-center gap-1.5 text-zinc-300">
+                      {r.status === "queued" && <Clock size={12} className="text-zinc-500" />}
                       {r.status === "running" && <Loader2 size={12} className="animate-spin text-neon" />}
                       {r.status === "done" && <CheckCircle2 size={12} className="text-neon" />}
                       {r.status === "failed" && <XCircle size={12} className="text-red-400" />}
                       {r.name}
+                      {r.status === "queued" && <span className="text-zinc-500">— queued</span>}
                       {r.status === "running" && (
                         <span className="text-zinc-500">
                           {typeof r.totalSlides === "number"

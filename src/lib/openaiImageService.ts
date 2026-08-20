@@ -20,6 +20,17 @@ function isSafetySystemRejection(err: unknown): boolean {
 
 const SAFETY_REJECTION_MAX_ATTEMPTS = 4; // 1 initial try + 3 retries
 
+/**
+ * Per-request ceiling. The SDK's default is 10 minutes, which is longer than
+ * the generation staleness window in src/lib/generation.ts — a throttled
+ * request would sit unserved long enough for the run to be reported "stalled"
+ * without any error ever being recorded. Failing at 2 minutes instead means
+ * the slide records a real reason. Worst case with retries stays under the
+ * staleness window.
+ */
+const REQUEST_TIMEOUT_MS = 120_000;
+const MAX_RETRIES = 2;
+
 async function callWithSafetyRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= SAFETY_REJECTION_MAX_ATTEMPTS; attempt++) {
@@ -60,7 +71,7 @@ export async function generateSlideImage({
   outputWidth: number;
   outputHeight: number;
 }): Promise<Buffer> {
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: MAX_RETRIES });
   const size = pickOpenAIRequestSize(model, outputWidth, outputHeight);
 
   try {
@@ -160,7 +171,41 @@ export async function generateSlideImage({
     }
   } catch (err) {
     if (err instanceof OpenAIImageError) throw err;
-    const message = err instanceof Error ? err.message : "Unknown OpenAI error";
-    throw new OpenAIImageError(`OpenAI image generation failed: ${message}`);
+    throw new OpenAIImageError(describeOpenAIFailure(err));
   }
+}
+
+/**
+ * Turns an OpenAI SDK error into something that explains itself when it lands
+ * in Slide.errorMessage and gets shown in the UI. Rate limiting and timeouts
+ * are the two failures that look identical from the outside (a run that just
+ * sits there), so they're called out explicitly.
+ */
+function describeOpenAIFailure(err: unknown): string {
+  if (err instanceof OpenAI.APIError) {
+    if (err.status === 429) {
+      return (
+        "OpenAI rate limit reached — too many image requests at once. " +
+        "Fewer templates generating simultaneously, or a higher OpenAI tier, will clear this. " +
+        "Use Resume to pick up the slides that didn't finish."
+      );
+    }
+    if (err.status === 401) return "OpenAI rejected the API key. Check it in Settings.";
+    if (err.status === 400 && err.code === "content_policy_violation") {
+      return "OpenAI's safety system rejected this prompt after several attempts. Try rewording the slide prompt.";
+    }
+    if (err.status && err.status >= 500) {
+      return `OpenAI server error (${err.status}). This is transient — Resume to retry.`;
+    }
+    return `OpenAI error (${err.status ?? "unknown"}): ${err.message}`;
+  }
+
+  const message = err instanceof Error ? err.message : "Unknown OpenAI error";
+  if (/timed? ?out|ETIMEDOUT|aborted/i.test(message)) {
+    return (
+      `OpenAI did not respond within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s, ` +
+      "usually because too many image requests are queued at once. Use Resume to retry the unfinished slides."
+    );
+  }
+  return `OpenAI image generation failed: ${message}`;
 }
